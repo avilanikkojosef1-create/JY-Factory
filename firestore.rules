@@ -1,0 +1,203 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId (Firebase Auth UID)
+    // Fields:
+    //   - uid: string (required) - The unique Firebase Auth ID.
+    //   - name: string (optional) - Full name of the user.
+    //   - email: string (required, email format) - Email address.
+    //   - role: string (required, enum: ["admin", "editor", "viewer"]) - Access level.
+    //   - status: string (required, enum: ["Active", "Inactive", "Pending"]) - Account status.
+    //   - avatar: string (optional) - URL to the profile picture.
+    //   - invitedDate: string (optional) - Date the user was invited.
+    //   - hasPassword: bool (optional) - Whether the user has set an app password.
+    //   - appPassword: string (optional) - The app password (encrypted/hashed).
+    //
+    // Collection: tasks
+    // Document ID: taskId (auto-generated)
+    // Fields:
+    //   - title: string (required) - Task title.
+    //   - project: string (optional) - Associated project name.
+    //   - status: string (required, enum: ["Completed", "In Progress", "Not Started"]) - Current status.
+    //   - priority: string (required, enum: ["High", "Medium", "Low"]) - Task priority.
+    //   - dueDate: string (required) - Due date.
+    //   - subtasks: map (optional) - { completed: number, total: number }
+    //   - assignedTo: string (optional) - UID of the assigned user.
+    //   - createdAt: string (optional) - ISO timestamp.
+    //
+    // Collection: clients
+    // Document ID: clientId (auto-generated)
+    // Fields:
+    //   - name: string (required) - Client name.
+    //   - industry: string (optional) - Industry sector.
+    //   - projects: number (optional) - Number of active projects.
+    //   - email: string (optional)
+    //   - phone: string (optional)
+    //   - website: string (optional)
+    //
+    // Collection: projects
+    // Document ID: projectId (auto-generated)
+    // Fields:
+    //   - name: string (required)
+    //   - clientId: string (required)
+    //   - clientName: string (optional)
+    //   - status: string (required, enum: ["Active", "On Hold", "Completed"])
+    //   - budget: number (optional)
+    //   - deadline: string (optional)
+    //   - description: string (optional)
+    //
+    // Collection: invites
+    // Document ID: inviteId (auto-generated)
+    // Fields:
+    //   - email: string (required, email format)
+    //   - name: string (optional)
+    //   - role: string (required, enum: ["admin", "editor", "viewer"])
+    //   - invitedBy: string (required) - UID of the inviter.
+    //   - timestamp: string (required) - Time of invitation.
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "avilanikkojosef1@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'role', 'status']) &&
+             hasOnlyAllowedFields(['uid', 'name', 'email', 'role', 'status', 'avatar', 'invitedDate', 'hasPassword', 'appPassword']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['admin', 'editor', 'viewer'] &&
+             data.status in ['Active', 'Inactive', 'Pending'] &&
+             (!('name' in data) || (data.name is string && data.name.size() < 100)) &&
+             (!('avatar' in data) || (data.avatar is string && data.avatar.size() < 500)) &&
+             (!('invitedDate' in data) || (data.invitedDate is string && data.invitedDate.size() < 50)) &&
+             (!('hasPassword' in data) || (data.hasPassword is bool)) &&
+             (!('appPassword' in data) || (data.appPassword is string && data.appPassword.size() < 200));
+    }
+
+    function isValidTask(data) {
+      return hasRequiredFields(['title', 'status', 'priority', 'dueDate']) &&
+             hasOnlyAllowedFields(['title', 'project', 'status', 'priority', 'dueDate', 'subtasks', 'assignedTo', 'createdAt']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.status in ['Completed', 'In Progress', 'Not Started'] &&
+             data.priority in ['High', 'Medium', 'Low'] &&
+             data.dueDate is string &&
+             (!('project' in data) || (data.project is string && data.project.size() < 100)) &&
+             (!('assignedTo' in data) || (data.assignedTo is string)) &&
+             (!('createdAt' in data) || (data.createdAt is string)) &&
+             (!('subtasks' in data) || (data.subtasks is map && data.subtasks.keys().hasAll(['completed', 'total'])));
+    }
+
+    function isValidClient(data) {
+      return hasRequiredFields(['name']) &&
+             hasOnlyAllowedFields(['name', 'industry', 'projects', 'email', 'phone', 'website']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('industry' in data) || (data.industry is string && data.industry.size() < 100)) &&
+             (!('projects' in data) || (data.projects is number)) &&
+             (!('email' in data) || (data.email is string && isValidEmail(data.email))) &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() < 20)) &&
+             (!('website' in data) || (data.website is string && data.website.size() < 500));
+    }
+
+    function isValidProject(data) {
+      return hasRequiredFields(['name', 'clientId', 'status']) &&
+             hasOnlyAllowedFields(['name', 'clientId', 'clientName', 'status', 'budget', 'deadline', 'description']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.clientId is string &&
+             data.status in ['Active', 'On Hold', 'Completed'] &&
+             (!('clientName' in data) || (data.clientName is string)) &&
+             (!('budget' in data) || (data.budget is number)) &&
+             (!('deadline' in data) || (data.deadline is string)) &&
+             (!('description' in data) || (data.description is string && data.description.size() < 2000));
+    }
+
+    function isValidInvite(data) {
+      return hasRequiredFields(['email', 'role', 'timestamp', 'invitedBy']) &&
+             hasOnlyAllowedFields(['email', 'name', 'role', 'timestamp', 'invitedBy']) &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['admin', 'editor', 'viewer'] &&
+             data.timestamp is string &&
+             data.invitedBy is string;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'viewer' || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidTask(request.resource.data);
+      allow update: if isAuthenticated() && isValidTask(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /clients/{clientId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidClient(request.resource.data);
+      allow update: if isAdmin() && isValidClient(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidProject(request.resource.data);
+      allow update: if isAdmin() && isValidProject(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /invites/{inviteId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidInvite(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

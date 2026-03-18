@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A staff member or admin user.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique Firebase Auth ID." },
+        "name": { "type": "string", "description": "Full name of the user." },
+        "email": { "type": "string", "format": "email", "description": "Email address." },
+        "role": { "type": "string", "enum": ["admin", "editor", "viewer"], "description": "Access level." },
+        "status": { "type": "string", "enum": ["Active", "Inactive", "Pending"], "description": "Account status." },
+        "avatar": { "type": "string", "description": "URL to the profile picture." },
+        "invitedDate": { "type": "string", "description": "Date the user was invited." }
+      },
+      "required": ["uid", "email", "role", "status"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "A task assigned to a project or user.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Task title." },
+        "project": { "type": "string", "description": "Associated project name." },
+        "status": { "type": "string", "enum": ["Completed", "In Progress", "Not Started"], "description": "Current status." },
+        "priority": { "type": "string", "enum": ["High", "Medium", "Low"], "description": "Task priority." },
+        "dueDate": { "type": "string", "description": "Due date." },
+        "subtasks": {
+          "type": "object",
+          "properties": {
+            "completed": { "type": "number" },
+            "total": { "type": "number" }
+          }
+        },
+        "assignedTo": { "type": "string", "description": "UID of the assigned user." }
+      },
+      "required": ["title", "status", "priority", "dueDate"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "A client organization.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Client name." },
+        "industry": { "type": "string", "description": "Industry sector." },
+        "projects": { "type": "number", "description": "Number of active projects." },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "website": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A creative project for a client.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "On Hold", "Completed"] },
+        "budget": { "type": "number" },
+        "deadline": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["name", "clientId", "status"]
+    },
+    "Invite": {
+      "title": "Invite",
+      "description": "A pending staff invitation.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "editor", "viewer"] },
+        "invitedBy": { "type": "string", "description": "UID of the inviter." },
+        "timestamp": { "type": "string", "description": "Time of invitation." }
+      },
+      "required": ["email", "role", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": "User", "description": "User profiles." },
+    "/tasks/{taskId}": { "schema": "Task", "description": "Global tasks list." },
+    "/clients/{clientId}": { "schema": "Client", "description": "Client database." },
+    "/projects/{projectId}": { "schema": "Project", "description": "Projects database." },
+    "/invites/{inviteId}": { "schema": "Invite", "description": "Pending invitations." }
+  }
+}
