@@ -23,12 +23,14 @@ service cloud.firestore {
     // Document ID: taskId (auto-generated)
     // Fields:
     //   - title: string (required) - Task title.
-    //   - project: string (optional) - Associated project name.
+    //   - clientId: string (optional) - Associated client ID.
+    //   - clientName: string (optional) - Associated client name.
     //   - status: string (required, enum: ["Completed", "In Progress", "Not Started"]) - Current status.
     //   - priority: string (required, enum: ["High", "Medium", "Low"]) - Task priority.
     //   - dueDate: string (required) - Due date.
     //   - subtasks: map (optional) - { completed: number, total: number }
     //   - assignedTo: string (optional) - UID of the assigned user.
+    //   - assignedToName: string (optional) - Name of the assigned user.
     //   - createdAt: string (optional) - ISO timestamp.
     //
     // Collection: clients
@@ -41,17 +43,6 @@ service cloud.firestore {
     //   - phone: string (optional)
     //   - website: string (optional)
     //
-    // Collection: projects
-    // Document ID: projectId (auto-generated)
-    // Fields:
-    //   - name: string (required)
-    //   - clientId: string (required)
-    //   - clientName: string (optional)
-    //   - status: string (required, enum: ["Active", "On Hold", "Completed"])
-    //   - budget: number (optional)
-    //   - deadline: string (optional)
-    //   - description: string (optional)
-    //
     // Collection: invites
     // Document ID: inviteId (auto-generated)
     // Fields:
@@ -60,6 +51,21 @@ service cloud.firestore {
     //   - role: string (required, enum: ["admin", "editor", "viewer"])
     //   - invitedBy: string (required) - UID of the inviter.
     //   - timestamp: string (required) - Time of invitation.
+    //
+    // Collection: timeEntries
+    // Document ID: entryId (auto-generated)
+    // Fields:
+    //   - userId: string (required)
+    //   - userName: string (optional)
+    //   - clientId: string (required)
+    //   - clientName: string (optional)
+    //   - taskId: string (optional)
+    //   - taskTitle: string (optional)
+    //   - startTime: string (required)
+    //   - endTime: string (optional)
+    //   - duration: number (optional)
+    //   - description: string (optional)
+    //   - date: string (required)
     //
     // ===============================================================
 
@@ -113,13 +119,15 @@ service cloud.firestore {
 
     function isValidTask(data) {
       return hasRequiredFields(['title', 'status', 'priority', 'dueDate']) &&
-             hasOnlyAllowedFields(['title', 'project', 'status', 'priority', 'dueDate', 'subtasks', 'assignedTo', 'createdAt']) &&
+             hasOnlyAllowedFields(['title', 'clientId', 'clientName', 'status', 'priority', 'dueDate', 'subtasks', 'assignedTo', 'assignedToName', 'createdAt']) &&
              data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
              data.status in ['Completed', 'In Progress', 'Not Started'] &&
              data.priority in ['High', 'Medium', 'Low'] &&
              data.dueDate is string &&
-             (!('project' in data) || (data.project is string && data.project.size() < 100)) &&
+             (!('clientId' in data) || (data.clientId is string)) &&
+             (!('clientName' in data) || (data.clientName is string)) &&
              (!('assignedTo' in data) || (data.assignedTo is string)) &&
+             (!('assignedToName' in data) || (data.assignedToName is string)) &&
              (!('createdAt' in data) || (data.createdAt is string)) &&
              (!('subtasks' in data) || (data.subtasks is map && data.subtasks.keys().hasAll(['completed', 'total'])));
     }
@@ -135,18 +143,6 @@ service cloud.firestore {
              (!('website' in data) || (data.website is string && data.website.size() < 500));
     }
 
-    function isValidProject(data) {
-      return hasRequiredFields(['name', 'clientId', 'status']) &&
-             hasOnlyAllowedFields(['name', 'clientId', 'clientName', 'status', 'budget', 'deadline', 'description']) &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.clientId is string &&
-             data.status in ['Active', 'On Hold', 'Completed'] &&
-             (!('clientName' in data) || (data.clientName is string)) &&
-             (!('budget' in data) || (data.budget is number)) &&
-             (!('deadline' in data) || (data.deadline is string)) &&
-             (!('description' in data) || (data.description is string && data.description.size() < 2000));
-    }
-
     function isValidInvite(data) {
       return hasRequiredFields(['email', 'role', 'timestamp', 'invitedBy']) &&
              hasOnlyAllowedFields(['email', 'name', 'role', 'timestamp', 'invitedBy']) &&
@@ -154,6 +150,22 @@ service cloud.firestore {
              data.role in ['admin', 'editor', 'viewer'] &&
              data.timestamp is string &&
              data.invitedBy is string;
+    }
+
+    function isValidTimeEntry(data) {
+      return hasRequiredFields(['userId', 'clientId', 'startTime', 'date']) &&
+             hasOnlyAllowedFields(['userId', 'userName', 'clientId', 'clientName', 'taskId', 'taskTitle', 'startTime', 'endTime', 'duration', 'description', 'date']) &&
+             data.userId is string &&
+             data.clientId is string &&
+             data.startTime is string &&
+             data.date is string &&
+             (!('userName' in data) || (data.userName is string)) &&
+             (!('clientName' in data) || (data.clientName is string)) &&
+             (!('taskId' in data) || (data.taskId is string)) &&
+             (!('taskTitle' in data) || (data.taskTitle is string)) &&
+             (!('endTime' in data) || (data.endTime is string)) &&
+             (!('duration' in data) || (data.duration is number)) &&
+             (!('description' in data) || (data.description is string && data.description.size() < 2000));
     }
 
     // ===============================================================
@@ -182,17 +194,17 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    match /projects/{projectId} {
-      allow read: if isAuthenticated();
-      allow create: if isAdmin() && isValidProject(request.resource.data);
-      allow update: if isAdmin() && isValidProject(request.resource.data);
-      allow delete: if isAdmin();
-    }
-
     match /invites/{inviteId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && isValidInvite(request.resource.data);
       allow delete: if isAdmin();
+    }
+
+    match /timeEntries/{entryId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(request.resource.data.userId) && isValidTimeEntry(request.resource.data);
+      allow update: if isAuthenticated() && isOwner(resource.data.userId) && isValidTimeEntry(request.resource.data);
+      allow delete: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
     }
 
     // Default deny

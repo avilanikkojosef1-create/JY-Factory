@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { ADMIN_EMAIL } from '../constants';
 import { 
   auth, 
   db, 
@@ -46,7 +47,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
           
           if (!userDoc.exists()) {
             // New user, create profile
-            const isDefaultAdmin = firebaseUser.email === 'avilanikkojosef1@gmail.com';
+            const isDefaultAdmin = firebaseUser.email?.toLowerCase() === ADMIN_EMAIL;
             await setDoc(userDocRef, {
               uid: firebaseUser.uid,
               name: firebaseUser.displayName || 'Anonymous',
@@ -61,7 +62,8 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
             setHasPassword(false);
           } else {
             const data = userDoc.data();
-            setIsAdmin(data.role === 'admin');
+            const isDefaultAdmin = firebaseUser.email?.toLowerCase() === ADMIN_EMAIL;
+            setIsAdmin(data.role === 'admin' || isDefaultAdmin);
             setHasPassword(!!data.hasPassword);
           }
         } catch (error) {

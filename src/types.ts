@@ -2,13 +2,17 @@ export type Priority = 'High' | 'Medium' | 'Low';
 export type Status = 'Completed' | 'In Progress' | 'Not Started';
 
 export interface Task {
-  id: number;
+  id: string | number;
   title: string;
-  project?: string;
+  clientId?: string;
+  clientName?: string;
   status: Status;
   priority: Priority;
   dueDate: string;
   subtasks: { completed: number; total: number };
+  assignedTo?: string;
+  assignedToName?: string;
+  createdAt?: string;
 }
 
 export interface Client {
@@ -21,15 +25,19 @@ export interface Client {
   website?: string;
 }
 
-export interface Project {
+export interface TimeEntry {
   id: string;
-  name: string;
+  userId: string;
+  userName: string;
   clientId: string;
-  clientName?: string;
-  status: 'Active' | 'On Hold' | 'Completed';
-  budget?: number;
-  deadline?: string;
-  description?: string;
+  clientName: string;
+  taskId?: string;
+  taskTitle?: string;
+  startTime: string;
+  endTime?: string;
+  duration: number; // in seconds
+  description: string;
+  date: string;
 }
 
 export interface StaffMember {
@@ -43,4 +51,4 @@ export interface StaffMember {
   hasPassword?: boolean;
 }
 
-export type ViewType = 'Dashboard' | 'My Tasks' | 'Clients' | 'Projects' | 'All Tasks' | 'Studio' | 'Staff' | 'AI Agents' | 'Settings';
+export type ViewType = 'Dashboard' | 'My Tasks' | 'Clients' | 'All Tasks' | 'Time Tracker' | 'Timesheets' | 'Studio' | 'Staff' | 'AI Agents' | 'Settings';

@@ -17,11 +17,12 @@
     },
     "Task": {
       "title": "Task",
-      "description": "A task assigned to a project or user.",
+      "description": "A task assigned to a client or user.",
       "type": "object",
       "properties": {
         "title": { "type": "string", "description": "Task title." },
-        "project": { "type": "string", "description": "Associated project name." },
+        "clientId": { "type": "string", "description": "Associated client ID." },
+        "clientName": { "type": "string", "description": "Associated client name." },
         "status": { "type": "string", "enum": ["Completed", "In Progress", "Not Started"], "description": "Current status." },
         "priority": { "type": "string", "enum": ["High", "Medium", "Low"], "description": "Task priority." },
         "dueDate": { "type": "string", "description": "Due date." },
@@ -32,7 +33,9 @@
             "total": { "type": "number" }
           }
         },
-        "assignedTo": { "type": "string", "description": "UID of the assigned user." }
+        "assignedTo": { "type": "string", "description": "UID of the assigned user." },
+        "assignedToName": { "type": "string", "description": "Name of the assigned user." },
+        "createdAt": { "type": "string", "description": "Creation timestamp." }
       },
       "required": ["title", "status", "priority", "dueDate"]
     },
@@ -50,21 +53,6 @@
       },
       "required": ["name"]
     },
-    "Project": {
-      "title": "Project",
-      "description": "A creative project for a client.",
-      "type": "object",
-      "properties": {
-        "name": { "type": "string" },
-        "clientId": { "type": "string" },
-        "clientName": { "type": "string" },
-        "status": { "type": "string", "enum": ["Active", "On Hold", "Completed"] },
-        "budget": { "type": "number" },
-        "deadline": { "type": "string" },
-        "description": { "type": "string" }
-      },
-      "required": ["name", "clientId", "status"]
-    },
     "Invite": {
       "title": "Invite",
       "description": "A pending staff invitation.",
@@ -77,13 +65,32 @@
         "timestamp": { "type": "string", "description": "Time of invitation." }
       },
       "required": ["email", "role", "timestamp"]
+    },
+    "TimeEntry": {
+      "title": "TimeEntry",
+      "description": "A log of time worked.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "taskId": { "type": "string" },
+        "taskTitle": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "duration": { "type": "number" },
+        "description": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["userId", "clientId", "startTime", "date"]
     }
   },
   "firestore": {
     "/users/{userId}": { "schema": "User", "description": "User profiles." },
     "/tasks/{taskId}": { "schema": "Task", "description": "Global tasks list." },
     "/clients/{clientId}": { "schema": "Client", "description": "Client database." },
-    "/projects/{projectId}": { "schema": "Project", "description": "Projects database." },
-    "/invites/{inviteId}": { "schema": "Invite", "description": "Pending invitations." }
+    "/invites/{inviteId}": { "schema": "Invite", "description": "Pending invitations." },
+    "/timeEntries/{entryId}": { "schema": "TimeEntry", "description": "Time logs." }
   }
 }

@@ -25,9 +25,16 @@ import {
   Sparkles,
   BarChart3,
   UserPlus,
-  X
+  X,
+  Clock,
+  FileSpreadsheet,
+  Download,
+  Play,
+  Square,
+  Pause
 } from 'lucide-react';
-import { ViewType, Task, Priority, Status, StaffMember, Client, Project } from '../types';
+import { ViewType, Task, Priority, Status, StaffMember, Client, TimeEntry } from '../types';
+import { ADMIN_EMAIL } from '../constants';
 import { useFirebase } from './FirebaseProvider';
 import { 
   db, 
@@ -49,42 +56,47 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ onLogout }: DashboardProps) {
-  const { user, isAdmin } = useFirebase();
+  const { user, isAdmin: contextIsAdmin } = useFirebase();
+  const isAdmin = contextIsAdmin || user?.email?.toLowerCase() === ADMIN_EMAIL;
   const [currentView, setCurrentView] = useState<ViewType>('My Tasks');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]);
+  const [activeTimer, setActiveTimer] = useState<{
+    startTime: string;
+    clientId: string;
+    clientName: string;
+    taskId?: string;
+    taskTitle?: string;
+    description: string;
+  } | null>(() => {
+    const saved = localStorage.getItem('activeTimer');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [isAddTaskOpen, setIsAddTaskOpen] = useState(false);
   const [isInviteStaffOpen, setIsInviteStaffOpen] = useState(false);
   const [isAddClientOpen, setIsAddClientOpen] = useState(false);
-  const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
-
-  // Seed Projects if empty
-  useEffect(() => {
-    if (!user || !isAdmin) return;
-    
-    const checkAndSeed = async () => {
-      try {
-        const snapshot = await getDocs(collection(db, 'projects'));
-        if (snapshot.empty) {
-          const initialProjects = [
-            { name: 'Menbly', status: 'Active', clientId: 'default', clientName: 'Internal' },
-            { name: 'Gashina', status: 'Active', clientId: 'default', clientName: 'Internal' },
-            { name: 'Flexmallkr', status: 'Active', clientId: 'default', clientName: 'Internal' }
-          ];
-          
-          for (const project of initialProjects) {
-            await addDoc(collection(db, 'projects'), project);
-          }
-        }
-      } catch (error) {
-        console.error('Error seeding projects:', error);
-      }
-    };
-    
-    checkAndSeed();
-  }, [user, isAdmin]);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+  const [alertModal, setAlertModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+  });
 
   // Sync Tasks from Firestore
   useEffect(() => {
@@ -140,28 +152,36 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     return () => unsubscribe();
   }, [user]);
 
-  // Sync Projects from Firestore
+  // Sync Time Entries from Firestore
   useEffect(() => {
     if (!user) return;
 
-    const projectsQuery = query(collection(db, 'projects'), orderBy('name', 'asc'));
-    const unsubscribe = onSnapshot(projectsQuery, (snapshot) => {
-      const projectsData = snapshot.docs.map(doc => ({
+    const timeEntriesQuery = query(collection(db, 'timeEntries'), orderBy('startTime', 'desc'));
+    const unsubscribe = onSnapshot(timeEntriesQuery, (snapshot) => {
+      const timeEntriesData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
-      })) as Project[];
-      setProjects(projectsData);
+      })) as TimeEntry[];
+      setTimeEntries(timeEntriesData);
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'projects');
+      handleFirestoreError(error, OperationType.LIST, 'timeEntries');
     });
 
     return () => unsubscribe();
   }, [user]);
+
+  // Save active timer to localStorage
+  useEffect(() => {
+    if (activeTimer) {
+      localStorage.setItem('activeTimer', JSON.stringify(activeTimer));
+    } else {
+      localStorage.removeItem('activeTimer');
+    }
+  }, [activeTimer]);
   const handleAddTask = async (taskData: Omit<Task, 'id'>) => {
     try {
       await addDoc(collection(db, 'tasks'), {
         ...taskData,
-        assignedTo: user?.uid,
         createdAt: new Date().toISOString()
       });
       setIsAddTaskOpen(false);
@@ -198,27 +218,22 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   };
 
-  const handleAddProject = async (projectData: Omit<Project, 'id'>) => {
-    try {
-      await addDoc(collection(db, 'projects'), projectData);
-      setIsAddProjectOpen(false);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'projects');
-    }
-  };
-
   const renderView = () => {
     switch (currentView) {
       case 'My Tasks':
-        return <TasksView tasks={tasks} projects={projects} onAddTask={() => setIsAddTaskOpen(true)} />;
+        return <TasksView title="My Tasks" description="Tasks assigned to you across all clients" tasks={tasks.filter(t => t.assignedTo === user?.uid)} clients={clients} staff={staff} onAddTask={() => setIsAddTaskOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} />;
+      case 'All Tasks':
+        return <TasksView title="All Tasks" description="All tasks in the system across all clients" tasks={tasks} clients={clients} staff={staff} onAddTask={() => setIsAddTaskOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} />;
       case 'Clients':
-        return <ClientsView clients={clients} onAddClient={() => setIsAddClientOpen(true)} />;
-      case 'Projects':
-        return <ProjectsView projects={projects} onAddProject={() => setIsAddProjectOpen(true)} />;
+        return <ClientsView clients={clients} onAddClient={() => setIsAddClientOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} />;
+      case 'Time Tracker':
+        return <TimeTrackerView activeTimer={activeTimer} setActiveTimer={setActiveTimer} clients={clients} tasks={tasks} user={user} />;
+      case 'Timesheets':
+        return <TimesheetsView timeEntries={timeEntries} isAdmin={isAdmin} />;
       case 'Studio':
         return <PlaceholderView title="Creative Studio" description="The workspace for our creatives to collaborate and build." />;
       case 'Staff':
-        return <StaffView staff={staff} onInvite={() => setIsInviteStaffOpen(true)} />;
+        return <StaffView staff={staff} onInvite={() => setIsInviteStaffOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} />;
       case 'Settings':
         return <SettingsView />;
       default:
@@ -261,16 +276,22 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               onClick={() => setCurrentView('Clients')} 
             />
             <SidebarItem 
-              icon={<Briefcase size={18} />} 
-              label="Projects" 
-              active={currentView === 'Projects'} 
-              onClick={() => setCurrentView('Projects')} 
-            />
-            <SidebarItem 
               icon={<Layers size={18} />} 
               label="All Tasks" 
               active={currentView === 'All Tasks'} 
               onClick={() => setCurrentView('All Tasks')} 
+            />
+            <SidebarItem 
+              icon={<Clock size={18} />} 
+              label="Time Tracker" 
+              active={currentView === 'Time Tracker'} 
+              onClick={() => setCurrentView('Time Tracker')} 
+            />
+            <SidebarItem 
+              icon={<FileSpreadsheet size={18} />} 
+              label="Timesheets" 
+              active={currentView === 'Timesheets'} 
+              onClick={() => setCurrentView('Timesheets')} 
             />
           </SidebarSection>
 
@@ -315,7 +336,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               <img src={user?.photoURL || 'https://picsum.photos/seed/user/100/100'} alt="User" referrerPolicy="no-referrer" />
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-bold text-slate-800 truncate">{user?.displayName || 'User'}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-bold text-slate-800 truncate">{user?.displayName || 'User'}</p>
+                {isAdmin && (
+                  <span className="px-1 py-0.5 bg-blue-50 text-blue-600 text-[8px] font-bold rounded border border-blue-100 uppercase tracking-tighter">Admin</span>
+                )}
+              </div>
               <p className="text-[10px] text-slate-400 font-medium truncate">{user?.email}</p>
             </div>
           </div>
@@ -347,6 +373,15 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           </div>
 
           <div className="flex items-center gap-4">
+            {activeTimer && (
+              <div 
+                onClick={() => setCurrentView('Time Tracker')}
+                className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg border border-red-100 cursor-pointer hover:bg-red-100 transition-all animate-pulse"
+              >
+                <Clock size={14} />
+                <span className="text-xs font-bold font-mono">Timer Active</span>
+              </div>
+            )}
             <button className="p-2 text-slate-400 hover:text-slate-600 transition-colors">
               <Bell size={20} />
             </button>
@@ -363,7 +398,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       <AnimatePresence>
         {isAddTaskOpen && (
           <AddTaskModal 
-            projects={projects}
+            clients={clients}
+            staff={staff}
             onClose={() => setIsAddTaskOpen(false)} 
             onAdd={handleAddTask} 
           />
@@ -380,11 +416,19 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             onAdd={handleAddClient} 
           />
         )}
-        {isAddProjectOpen && (
-          <AddProjectModal 
-            clients={clients}
-            onClose={() => setIsAddProjectOpen(false)} 
-            onAdd={handleAddProject} 
+        {confirmModal.isOpen && (
+          <ConfirmationModal 
+            title={confirmModal.title}
+            message={confirmModal.message}
+            onConfirm={confirmModal.onConfirm}
+            onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+          />
+        )}
+        {alertModal.isOpen && (
+          <AlertModal 
+            title={alertModal.title}
+            message={alertModal.message}
+            onClose={() => setAlertModal(prev => ({ ...prev, isOpen: false }))}
           />
         )}
       </AnimatePresence>
@@ -417,16 +461,33 @@ function SidebarItem({ icon, label, active = false, onClick }: { icon: React.Rea
   );
 }
 
-function TasksView({ tasks, projects, onAddTask }: { tasks: Task[], projects: Project[], onAddTask: () => void }) {
-  const { isAdmin } = useFirebase();
+function TasksView({ title, description, tasks, clients, staff, onAddTask, setConfirmModal, setAlertModal }: { 
+  title: string,
+  description: string,
+  tasks: Task[], 
+  clients: Client[],
+  staff: StaffMember[],
+  onAddTask: () => void,
+  setConfirmModal: React.Dispatch<React.SetStateAction<any>>,
+  setAlertModal: React.Dispatch<React.SetStateAction<any>>
+}) {
+  const { user, isAdmin: contextIsAdmin } = useFirebase();
+  const isAdmin = contextIsAdmin || user?.email?.toLowerCase() === ADMIN_EMAIL;
 
   const handleDeleteTask = async (taskId: string) => {
-    if (!window.confirm('Are you sure you want to delete this task?')) return;
-    try {
-      await deleteDoc(doc(db, 'tasks', taskId));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `tasks/${taskId}`);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Task',
+      message: 'Are you sure you want to delete this task? This action cannot be undone.',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'tasks', taskId));
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, `tasks/${taskId}`);
+        }
+      }
+    });
   };
 
   const handleToggleStatus = async (task: Task) => {
@@ -442,8 +503,8 @@ function TasksView({ tasks, projects, onAddTask }: { tasks: Task[], projects: Pr
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">My Tasks</h1>
-          <p className="text-slate-500 text-sm mt-1">Tasks assigned to you across all projects</p>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">{title}</h1>
+          <p className="text-slate-500 text-sm mt-1">{description}</p>
         </div>
         <button 
           onClick={onAddTask}
@@ -493,7 +554,8 @@ function TasksView({ tasks, projects, onAddTask }: { tasks: Task[], projects: Pr
             <tr className="bg-slate-50/50 border-b border-slate-200">
               <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-12">#</th>
               <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Task</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Project</th>
+              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Client</th>
+              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Assignee</th>
               <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</th>
               <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Priority</th>
               <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Due Date</th>
@@ -513,7 +575,8 @@ function TasksView({ tasks, projects, onAddTask }: { tasks: Task[], projects: Pr
                     </span>
                   </div>
                 </td>
-                <td className="px-6 py-4 text-sm text-slate-500 font-medium">{task.project || '-'}</td>
+                <td className="px-6 py-4 text-sm text-slate-500 font-medium">{task.clientName || '-'}</td>
+                <td className="px-6 py-4 text-sm text-slate-500 font-medium">{task.assignedToName || 'Unassigned'}</td>
                 <td className="px-6 py-4">
                   <button onClick={() => handleToggleStatus(task)}>
                     <StatusBadge status={task.status} />
@@ -527,9 +590,10 @@ function TasksView({ tasks, projects, onAddTask }: { tasks: Task[], projects: Pr
                   {isAdmin && (
                     <button 
                       onClick={() => handleDeleteTask(task.id as any)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-all font-bold text-xs border border-red-100"
                     >
-                      <X size={16} />
+                      <X size={14} />
+                      Delete
                     </button>
                   )}
                 </td>
@@ -587,20 +651,32 @@ function PlaceholderView({ title, description }: { title: string, description: s
   );
 }
 
-function AddTaskModal({ onClose, onAdd, projects }: { onClose: () => void, onAdd: (task: Omit<Task, 'id'>) => void, projects: Project[] }) {
+function AddTaskModal({ onClose, onAdd, clients, staff }: { 
+  onClose: () => void, 
+  onAdd: (task: Omit<Task, 'id'>) => void, 
+  clients: Client[],
+  staff: StaffMember[]
+}) {
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Priority>('Medium');
-  const [project, setProject] = useState(projects.length > 0 ? projects[0].name : '');
+  const [clientId, setClientId] = useState('');
+  const [assignedTo, setAssignedTo] = useState('');
   const [dueDate, setDueDate] = useState(new Date().toISOString().split('T')[0]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const client = clients.find(c => c.id === clientId);
+    const assignee = staff.find(s => s.id === assignedTo);
+    
     onAdd({
       title,
       status: 'Not Started',
       priority,
       dueDate,
-      project,
+      clientId,
+      clientName: client?.name || 'No Client',
+      assignedTo,
+      assignedToName: assignee?.name || 'Unassigned',
       subtasks: { completed: 0, total: 0 }
     });
   };
@@ -634,18 +710,33 @@ function AddTaskModal({ onClose, onAdd, projects }: { onClose: () => void, onAdd
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
               />
             </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">Project</label>
-              <select 
-                value={project}
-                onChange={(e) => setProject(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-medium"
-              >
-                <option value="">No Project</option>
-                {projects.map(p => (
-                  <option key={p.id} value={p.name}>{p.name}</option>
-                ))}
-              </select>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">Client</label>
+                <select 
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-medium"
+                >
+                  <option value="">No Client</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">Assignee</label>
+                <select 
+                  value={assignedTo}
+                  onChange={(e) => setAssignedTo(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-medium"
+                >
+                  <option value="">Unassigned</option>
+                  {staff.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-2">Due Date</label>
@@ -747,20 +838,38 @@ function SettingsView() {
   );
 }
 
-function StaffView({ staff, onInvite }: { staff: StaffMember[], onInvite: () => void }) {
-  const { isAdmin, user: currentUser } = useFirebase();
+function StaffView({ staff, onInvite, setConfirmModal, setAlertModal }: { 
+  staff: StaffMember[], 
+  onInvite: () => void,
+  setConfirmModal: React.Dispatch<React.SetStateAction<any>>,
+  setAlertModal: React.Dispatch<React.SetStateAction<any>>
+}) {
+  const { user: currentUser, isAdmin: contextIsAdmin } = useFirebase();
+  const isAdmin = contextIsAdmin || currentUser?.email?.toLowerCase() === ADMIN_EMAIL;
 
   const handleDeleteStaff = async (staffId: string) => {
     if (staffId === currentUser?.uid) {
-      alert("You cannot delete yourself.");
+      setAlertModal({
+        isOpen: true,
+        title: 'Action Not Allowed',
+        message: 'You cannot delete yourself.'
+      });
       return;
     }
-    if (!window.confirm('Are you sure you want to delete this staff member?')) return;
-    try {
-      await deleteDoc(doc(db, 'users', staffId));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `users/${staffId}`);
-    }
+    
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Staff Member',
+      message: 'Are you sure you want to delete this staff member? They will lose all access to the portal.',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'users', staffId));
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, `users/${staffId}`);
+        }
+      }
+    });
   };
 
   return (
@@ -957,16 +1066,29 @@ function InviteStaffModal({ onClose, onInvite }: { onClose: () => void, onInvite
   );
 }
 
-function ClientsView({ clients, onAddClient }: { clients: Client[], onAddClient: () => void }) {
-  const { isAdmin } = useFirebase();
+function ClientsView({ clients, onAddClient, setConfirmModal, setAlertModal }: { 
+  clients: Client[], 
+  onAddClient: () => void,
+  setConfirmModal: React.Dispatch<React.SetStateAction<any>>,
+  setAlertModal: React.Dispatch<React.SetStateAction<any>>
+}) {
+  const { user, isAdmin: contextIsAdmin } = useFirebase();
+  const isAdmin = contextIsAdmin || user?.email?.toLowerCase() === ADMIN_EMAIL;
 
   const handleDeleteClient = async (clientId: string) => {
-    if (!window.confirm('Are you sure you want to delete this client? All associated projects might be affected.')) return;
-    try {
-      await deleteDoc(doc(db, 'clients', clientId));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `clients/${clientId}`);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Client',
+      message: 'Are you sure you want to delete this client? All associated projects might be affected.',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'clients', clientId));
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, `clients/${clientId}`);
+        }
+      }
+    });
   };
 
   return (
@@ -1003,22 +1125,16 @@ function ClientsView({ clients, onAddClient }: { clients: Client[], onAddClient:
               {isAdmin && (
                 <button 
                   onClick={() => handleDeleteClient(client.id)}
-                  className="p-1.5 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-all font-bold text-xs border border-red-100"
                 >
-                  <X size={16} />
+                  <X size={14} />
+                  Delete
                 </button>
               )}
             </div>
-            <h3 className="text-lg font-bold text-slate-900 mb-1">{client.name}</h3>
-            <p className="text-sm text-slate-500 mb-4">{client.industry || 'No industry specified'}</p>
+            <h3 className="text-lg font-bold text-slate-900 mb-4">{client.name}</h3>
             
             <div className="space-y-2 border-t border-slate-100 pt-4">
-              {client.email && (
-                <div className="flex items-center gap-2 text-xs text-slate-600">
-                  <FileText size={14} className="text-slate-400" />
-                  {client.email}
-                </div>
-              )}
               <div className="flex items-center gap-2 text-xs text-slate-600">
                 <Briefcase size={14} className="text-slate-400" />
                 {client.projects || 0} Active Projects
@@ -1037,104 +1153,12 @@ function ClientsView({ clients, onAddClient }: { clients: Client[], onAddClient:
   );
 }
 
-function ProjectsView({ projects, onAddProject }: { projects: Project[], onAddProject: () => void }) {
-  const { isAdmin } = useFirebase();
-
-  const handleDeleteProject = async (projectId: string) => {
-    if (!window.confirm('Are you sure you want to delete this project?')) return;
-    try {
-      await deleteDoc(doc(db, 'projects', projectId));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `projects/${projectId}`);
-    }
-  };
-
-  return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Projects</h1>
-          <p className="text-slate-500 text-sm mt-1">Track creative projects, budgets, and deadlines</p>
-        </div>
-        {isAdmin && (
-          <button 
-            onClick={onAddProject}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 shadow-sm transition-all"
-          >
-            <Plus size={18} />
-            New Project
-          </button>
-        )}
-      </div>
-
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-slate-50/50 border-b border-slate-200">
-              <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Project Name</th>
-              <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Client</th>
-              <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</th>
-              <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Deadline</th>
-              <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Budget</th>
-              {isAdmin && <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-center">Actions</th>}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {projects.map((project) => (
-              <tr key={project.id} className="hover:bg-slate-50/50 transition-colors">
-                <td className="px-6 py-5">
-                  <span className="text-sm font-bold text-slate-800">{project.name}</span>
-                </td>
-                <td className="px-6 py-5 text-sm text-slate-500 font-medium">{project.clientName}</td>
-                <td className="px-6 py-5">
-                  <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border uppercase tracking-wider ${
-                    project.status === 'Active' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
-                    project.status === 'On Hold' ? 'bg-amber-50 text-amber-600 border-amber-100' : 
-                    'bg-slate-50 text-slate-500 border-slate-100'
-                  }`}>
-                    {project.status}
-                  </span>
-                </td>
-                <td className="px-6 py-5 text-sm text-slate-400 font-medium">{project.deadline || 'No deadline'}</td>
-                <td className="px-6 py-5 text-sm text-slate-600 font-bold">
-                  {project.budget ? `$${project.budget.toLocaleString()}` : '-'}
-                </td>
-                {isAdmin && (
-                  <td className="px-6 py-5 text-center">
-                    <button 
-                      onClick={() => handleDeleteProject(project.id)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                    >
-                      <X size={18} />
-                    </button>
-                  </td>
-                )}
-              </tr>
-            ))}
-            {projects.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-6 py-10 text-center text-slate-400 text-sm italic">
-                  No projects found. Create a new project to start tracking.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 function AddClientModal({ onClose, onAdd }: { onClose: () => void, onAdd: (client: Omit<Client, 'id'>) => void }) {
   const [name, setName] = useState('');
-  const [industry, setIndustry] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [website, setWebsite] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onAdd({ name, industry, email, phone, website, projects: 0 });
+    onAdd({ name, projects: 0 });
   };
 
   return (
@@ -1163,60 +1187,19 @@ function AddClientModal({ onClose, onAdd }: { onClose: () => void, onAdd: (clien
             </div>
           </div>
           
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">Client Name</label>
+              <label className="block text-sm font-bold text-slate-700 mb-2">Client Name</label>
               <input 
                 type="text" 
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g., Acme Corp"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
               />
             </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">Industry</label>
-              <input 
-                type="text" 
-                value={industry}
-                onChange={(e) => setIndustry(e.target.value)}
-                placeholder="e.g., Technology"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1">Email</label>
-                <input 
-                  type="email" 
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="contact@acme.com"
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1">Phone</label>
-                <input 
-                  type="text" 
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+1 (555) 000-0000"
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">Website</label>
-              <input 
-                type="url" 
-                value={website}
-                onChange={(e) => setWebsite(e.target.value)}
-                placeholder="https://acme.com"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
-              />
-            </div>
+            
             <div className="pt-4 flex items-center gap-3">
               <button 
                 type="button"
@@ -1239,30 +1222,9 @@ function AddClientModal({ onClose, onAdd }: { onClose: () => void, onAdd: (clien
   );
 }
 
-function AddProjectModal({ clients, onClose, onAdd }: { clients: Client[], onClose: () => void, onAdd: (project: Omit<Project, 'id'>) => void }) {
-  const [name, setName] = useState('');
-  const [clientId, setClientId] = useState('');
-  const [status, setStatus] = useState<'Active' | 'On Hold' | 'Completed'>('Active');
-  const [budget, setBudget] = useState('');
-  const [deadline, setDeadline] = useState('');
-  const [description, setDescription] = useState('');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const client = clients.find(c => c.id === clientId);
-    onAdd({ 
-      name, 
-      clientId, 
-      clientName: client?.name || 'Unknown Client',
-      status, 
-      budget: budget ? parseFloat(budget) : undefined, 
-      deadline, 
-      description 
-    });
-  };
-
+function ConfirmationModal({ title, message, onConfirm, onClose }: { title: string, message: string, onConfirm: () => void, onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <motion.div 
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -1274,96 +1236,364 @@ function AddProjectModal({ clients, onClose, onAdd }: { clients: Client[], onClo
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl relative z-10 overflow-hidden"
+        className="bg-white w-full max-w-md rounded-3xl shadow-2xl relative z-10 overflow-hidden"
       >
         <div className="p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600">
-              <Layers size={24} />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900">New Project</h2>
-              <p className="text-slate-500 text-sm">Start a new creative project</p>
-            </div>
-          </div>
+          <h2 className="text-xl font-bold text-slate-900 mb-2">{title}</h2>
+          <p className="text-slate-500 text-sm mb-8">{message}</p>
           
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={onClose}
+              className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-all"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={onConfirm}
+              className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-all shadow-lg shadow-red-100"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function AlertModal({ title, message, onClose }: { title: string, message: string, onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+      />
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="bg-white w-full max-w-md rounded-3xl shadow-2xl relative z-10 overflow-hidden"
+      >
+        <div className="p-8 text-center">
+          <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-4">
+            <Bell size={32} />
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 mb-2">{title}</h2>
+          <p className="text-slate-500 text-sm mb-8">{message}</p>
+          
+          <button 
+            onClick={onClose}
+            className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all"
+          >
+            Got it
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function TimeTrackerView({ 
+  activeTimer, 
+  setActiveTimer, 
+  clients, 
+  tasks, 
+  user 
+}: { 
+  activeTimer: any, 
+  setActiveTimer: any, 
+  clients: Client[], 
+  tasks: Task[],
+  user: any
+}) {
+  const [clientId, setClientId] = useState(activeTimer?.clientId || '');
+  const [taskId, setTaskId] = useState(activeTimer?.taskId || '');
+  const [description, setDescription] = useState(activeTimer?.description || '');
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    let interval: any;
+    if (activeTimer) {
+      const start = new Date(activeTimer.startTime).getTime();
+      interval = setInterval(() => {
+        setElapsed(Math.floor((Date.now() - start) / 1000));
+      }, 1000);
+    } else {
+      setElapsed(0);
+    }
+    return () => clearInterval(interval);
+  }, [activeTimer]);
+
+  const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const handleStart = () => {
+    const client = clients.find(c => c.id === clientId);
+    const task = tasks.find(t => t.id === taskId);
+    
+    if (!clientId) {
+      alert('Please select a client');
+      return;
+    }
+
+    const newTimer = {
+      startTime: new Date().toISOString(),
+      clientId,
+      clientName: client?.name || 'Unknown',
+      taskId,
+      taskTitle: task?.title || '',
+      description
+    };
+    setActiveTimer(newTimer);
+  };
+
+  const handleStop = async () => {
+    if (!activeTimer) return;
+
+    const endTime = new Date().toISOString();
+    const duration = Math.floor((new Date(endTime).getTime() - new Date(activeTimer.startTime).getTime()) / 1000);
+
+    const timeEntry: Omit<TimeEntry, 'id'> = {
+      userId: user.uid,
+      userName: user.displayName || 'User',
+      clientId: activeTimer.clientId,
+      clientName: activeTimer.clientName,
+      taskId: activeTimer.taskId,
+      taskTitle: activeTimer.taskTitle,
+      startTime: activeTimer.startTime,
+      endTime,
+      duration,
+      description: activeTimer.description,
+      date: new Date().toISOString().split('T')[0]
+    };
+
+    try {
+      await addDoc(collection(db, 'timeEntries'), timeEntry);
+      setActiveTimer(null);
+      setClientId('');
+      setTaskId('');
+      setDescription('');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'timeEntries');
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-4xl mx-auto">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-slate-900 mb-2">Time Tracker</h1>
+        <p className="text-slate-500">Track your daily work hours for client billing.</p>
+      </div>
+
+      <div className="bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden">
+        <div className="p-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">Project Name</label>
-              <input 
-                type="text" 
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g., Brand Identity Refresh"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">Client</label>
+              <label className="block text-sm font-bold text-slate-700 mb-2">Client</label>
               <select 
-                required
                 value={clientId}
                 onChange={(e) => setClientId(e.target.value)}
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm"
+                disabled={!!activeTimer}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all disabled:opacity-50"
               >
-                <option value="">Select a client...</option>
-                {clients.map(client => (
-                  <option key={client.id} value={client.id}>{client.name}</option>
+                <option value="">Select a client</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1">Status</label>
-                <select 
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as any)}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm"
-                >
-                  <option value="Active">Active</option>
-                  <option value="On Hold">On Hold</option>
-                  <option value="Completed">Completed</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1">Deadline</label>
-                <input 
-                  type="date" 
-                  value={deadline}
-                  onChange={(e) => setDeadline(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm"
-                />
-              </div>
-            </div>
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1">Budget ($)</label>
-              <input 
-                type="number" 
-                value={budget}
-                onChange={(e) => setBudget(e.target.value)}
-                placeholder="e.g., 5000"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
-              />
-            </div>
-            <div className="pt-4 flex items-center gap-3">
-              <button 
-                type="button"
-                onClick={onClose}
-                className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-all"
+              <label className="block text-sm font-bold text-slate-700 mb-2">Task (Optional)</label>
+              <select 
+                value={taskId}
+                onChange={(e) => setTaskId(e.target.value)}
+                disabled={!!activeTimer}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all disabled:opacity-50"
               >
-                Cancel
-              </button>
-              <button 
-                type="submit"
-                className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
-              >
-                Create Project
-              </button>
+                <option value="">Select a task</option>
+                {tasks.filter(t => t.clientId === clientId).map(t => (
+                  <option key={t.id} value={t.id}>{t.title}</option>
+                ))}
+              </select>
             </div>
-          </form>
+          </div>
+
+          <div className="mb-8">
+            <label className="block text-sm font-bold text-slate-700 mb-2">What are you working on?</label>
+            <textarea 
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              disabled={!!activeTimer}
+              placeholder="Describe your work..."
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all h-24 resize-none disabled:opacity-50"
+            />
+          </div>
+
+          <div className="flex flex-col items-center justify-center py-12 bg-slate-50 rounded-3xl border border-slate-100">
+            <div className="text-6xl font-mono font-bold text-slate-800 mb-8 tracking-tighter">
+              {formatTime(elapsed)}
+            </div>
+            
+            {!activeTimer ? (
+              <button 
+                onClick={handleStart}
+                className="flex items-center gap-3 px-12 py-4 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 group"
+              >
+                <Play size={24} className="fill-current" />
+                Start Timer
+              </button>
+            ) : (
+              <button 
+                onClick={handleStop}
+                className="flex items-center gap-3 px-12 py-4 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-all shadow-xl shadow-red-100 group"
+              >
+                <Square size={24} className="fill-current" />
+                Stop Timer
+              </button>
+            )}
+          </div>
         </div>
-      </motion.div>
+      </div>
+    </div>
+  );
+}
+
+function TimesheetsView({ 
+  timeEntries, 
+  isAdmin 
+}: { 
+  timeEntries: TimeEntry[], 
+  isAdmin: boolean 
+}) {
+  const [filter, setFilter] = useState('');
+  
+  const formatDuration = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return `${h}h ${m}m`;
+  };
+
+  const filteredEntries = timeEntries.filter(entry => 
+    entry.clientName.toLowerCase().includes(filter.toLowerCase()) ||
+    entry.userName.toLowerCase().includes(filter.toLowerCase()) ||
+    entry.description.toLowerCase().includes(filter.toLowerCase())
+  );
+
+  const handleExport = () => {
+    const headers = ['Date', 'User', 'Client', 'Task', 'Description', 'Start Time', 'End Time', 'Duration (s)', 'Duration (h)'];
+    const rows = filteredEntries.map(e => [
+      e.date,
+      e.userName,
+      e.clientName,
+      e.taskTitle || '',
+      e.description,
+      e.startTime,
+      e.endTime || '',
+      e.duration,
+      (e.duration / 3600).toFixed(2)
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `timesheet_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  return (
+    <div className="p-8">
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 mb-2">Timesheets</h1>
+          <p className="text-slate-500">View and export work logs for billing.</p>
+        </div>
+        <button 
+          onClick={handleExport}
+          className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"
+        >
+          <Download size={18} />
+          Export CSV
+        </button>
+      </div>
+
+      <div className="bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden">
+        <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+            <input 
+              type="text" 
+              placeholder="Filter by client, user, or description..." 
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50/50 border-b border-slate-100">
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">User</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Client</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Description</th>
+                <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Duration</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredEntries.map((entry) => (
+                <tr key={entry.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-6 py-4 text-sm font-medium text-slate-600">{entry.date}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-slate-200 overflow-hidden">
+                        <img src={`https://picsum.photos/seed/${entry.userName}/50/50`} alt={entry.userName} />
+                      </div>
+                      <span className="text-sm font-bold text-slate-800">{entry.userName}</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm font-bold text-blue-600">{entry.clientName}</td>
+                  <td className="px-6 py-4">
+                    <p className="text-sm text-slate-600 line-clamp-1">{entry.description}</p>
+                    {entry.taskTitle && <p className="text-[10px] text-slate-400 font-bold uppercase">{entry.taskTitle}</p>}
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <span className="px-3 py-1 bg-slate-100 text-slate-700 rounded-full text-xs font-bold">
+                      {formatDuration(entry.duration)}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {filteredEntries.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-6 py-20 text-center">
+                    <Clock className="mx-auto text-slate-200 mb-4" size={48} />
+                    <p className="text-slate-400 font-medium">No time entries found.</p>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
