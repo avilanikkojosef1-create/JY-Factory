@@ -83,8 +83,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "avilanikkojosef1@gmail.com" && request.auth.token.email_verified == true));
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "avilanikkojosef1@gmail.com" && request.auth.token.email_verified == true));
     }
 
     function isValidEmail(email) {
@@ -119,17 +120,18 @@ service cloud.firestore {
 
     function isValidTask(data) {
       return hasRequiredFields(['title', 'status', 'priority', 'dueDate']) &&
-             hasOnlyAllowedFields(['title', 'clientId', 'clientName', 'status', 'priority', 'dueDate', 'subtasks', 'assignedTo', 'assignedToName', 'createdAt']) &&
-             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
-             data.status in ['Completed', 'In Progress', 'Not Started'] &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             data.status is string &&
              data.priority in ['High', 'Medium', 'Low'] &&
              data.dueDate is string &&
-             (!('clientId' in data) || (data.clientId is string)) &&
-             (!('clientName' in data) || (data.clientName is string)) &&
-             (!('assignedTo' in data) || (data.assignedTo is string)) &&
-             (!('assignedToName' in data) || (data.assignedToName is string)) &&
-             (!('createdAt' in data) || (data.createdAt is string)) &&
-             (!('subtasks' in data) || (data.subtasks is map && data.subtasks.keys().hasAll(['completed', 'total'])));
+             (!('clientId' in data) || data.clientId is string) &&
+             (!('clientName' in data) || data.clientName is string) &&
+             (!('assignedTo' in data) || data.assignedTo is string) &&
+             (!('assignedToName' in data) || data.assignedToName is string) &&
+             (!('createdAt' in data) || data.createdAt is string) &&
+             (!('images' in data) || data.images is list) &&
+             (!('comments' in data) || data.comments is list) &&
+             (!('subtasks' in data) || (data.subtasks is map));
     }
 
     function isValidClient(data) {
@@ -182,8 +184,8 @@ service cloud.firestore {
 
     match /tasks/{taskId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidTask(request.resource.data);
-      allow update: if isAuthenticated() && isValidTask(request.resource.data);
+      allow create: if isAuthenticated() && (isAdmin() || isValidTask(request.resource.data));
+      allow update: if isAuthenticated() && (isAdmin() || isValidTask(request.resource.data));
       allow delete: if isAdmin();
     }
 

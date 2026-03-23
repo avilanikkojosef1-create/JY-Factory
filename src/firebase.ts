@@ -16,14 +16,20 @@ import {
   orderBy, 
   limit,
   getDocFromServer,
-  Timestamp
+  Timestamp,
+  arrayUnion,
+  arrayRemove
 } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+// Try explicit bucket name if default is failing
+export const storage = getStorage(app, firebaseConfig.storageBucket);
+console.log("Firebase Storage initialized with bucket:", firebaseConfig.storageBucket);
 export const googleProvider = new GoogleAuthProvider();
 
 // Error Handling Spec for Firestore Permissions
@@ -107,6 +113,13 @@ export {
   where, 
   orderBy, 
   limit,
-  Timestamp
+  Timestamp,
+  ref,
+  uploadBytes,
+  uploadBytesResumable,
+  getDownloadURL,
+  deleteObject,
+  arrayUnion,
+  arrayRemove
 };
 export type { FirebaseUser };

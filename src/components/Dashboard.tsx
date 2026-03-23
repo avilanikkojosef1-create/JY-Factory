@@ -31,11 +31,18 @@ import {
   Download,
   Play,
   Square,
-  Pause
+  Pause,
+  Image,
+  MessageSquare,
+  Send,
+  Paperclip,
+  Trash2,
+  Calendar
 } from 'lucide-react';
 import { ViewType, Task, Priority, Status, StaffMember, Client, TimeEntry } from '../types';
 import { ADMIN_EMAIL } from '../constants';
 import { useFirebase } from './FirebaseProvider';
+import imageCompression from 'browser-image-compression';
 import { 
   db, 
   collection, 
@@ -48,7 +55,14 @@ import {
   orderBy,
   getDocs,
   handleFirestoreError,
-  OperationType
+  OperationType,
+  storage,
+  ref,
+  uploadBytes,
+  uploadBytesResumable,
+  getDownloadURL,
+  arrayUnion,
+  arrayRemove
 } from '../firebase';
 
 interface DashboardProps {
@@ -104,12 +118,14 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     
     const tasksQuery = query(collection(db, 'tasks'), orderBy('dueDate', 'asc'));
     const unsubscribe = onSnapshot(tasksQuery, (snapshot) => {
+      console.log(`Firestore: onSnapshot received ${snapshot.docs.length} tasks.`);
       const tasksData = snapshot.docs.map(doc => ({
         id: doc.id as any,
         ...doc.data()
       })) as Task[];
       setTasks(tasksData);
     }, (error) => {
+      console.error("Firestore: onSnapshot error:", error);
       handleFirestoreError(error, OperationType.LIST, 'tasks');
     });
 
@@ -190,6 +206,17 @@ export default function Dashboard({ onLogout }: DashboardProps) {
     }
   };
 
+  const handleUpdateTask = async (id: string, updates: Partial<Task>) => {
+    try {
+      console.log(`Updating task ${id} with:`, updates);
+      await updateDoc(doc(db, 'tasks', id), updates);
+      console.log(`Task ${id} updated successfully.`);
+    } catch (error) {
+      console.error(`Error updating task ${id}:`, error);
+      handleFirestoreError(error, OperationType.UPDATE, `tasks/${id}`);
+    }
+  };
+
   const handleInviteStaff = async (inviteData: any) => {
     try {
       // In a real app, this would trigger a Cloud Function to send an email
@@ -221,9 +248,9 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const renderView = () => {
     switch (currentView) {
       case 'My Tasks':
-        return <TasksView title="My Tasks" description="Tasks assigned to you across all clients" tasks={tasks.filter(t => t.assignedTo === user?.uid)} clients={clients} staff={staff} onAddTask={() => setIsAddTaskOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} />;
+        return <TasksView title="My Tasks" description="Tasks assigned to you across all clients" tasks={tasks.filter(t => t.assignedTo === user?.uid)} clients={clients} staff={staff} onAddTask={() => setIsAddTaskOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} onUpdateTask={handleUpdateTask} />;
       case 'All Tasks':
-        return <TasksView title="All Tasks" description="All tasks in the system across all clients" tasks={tasks} clients={clients} staff={staff} onAddTask={() => setIsAddTaskOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} />;
+        return <TasksView title="All Tasks" description="All tasks in the system across all clients" tasks={tasks} clients={clients} staff={staff} onAddTask={() => setIsAddTaskOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} onUpdateTask={handleUpdateTask} />;
       case 'Clients':
         return <ClientsView clients={clients} onAddClient={() => setIsAddClientOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} />;
       case 'Time Tracker':
@@ -461,7 +488,7 @@ function SidebarItem({ icon, label, active = false, onClick }: { icon: React.Rea
   );
 }
 
-function TasksView({ title, description, tasks, clients, staff, onAddTask, setConfirmModal, setAlertModal }: { 
+function TasksView({ title, description, tasks, clients, staff, onAddTask, setConfirmModal, setAlertModal, onUpdateTask }: { 
   title: string,
   description: string,
   tasks: Task[], 
@@ -469,10 +496,13 @@ function TasksView({ title, description, tasks, clients, staff, onAddTask, setCo
   staff: StaffMember[],
   onAddTask: () => void,
   setConfirmModal: React.Dispatch<React.SetStateAction<any>>,
-  setAlertModal: React.Dispatch<React.SetStateAction<any>>
+  setAlertModal: React.Dispatch<React.SetStateAction<any>>,
+  onUpdateTask: (id: string, updates: Partial<Task>) => void
 }) {
   const { user, isAdmin: contextIsAdmin } = useFirebase();
   const isAdmin = contextIsAdmin || user?.email?.toLowerCase() === ADMIN_EMAIL;
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const selectedTask = tasks.find(t => t.id === selectedTaskId) || null;
 
   const handleDeleteTask = async (taskId: string) => {
     setConfirmModal({
@@ -490,132 +520,157 @@ function TasksView({ title, description, tasks, clients, staff, onAddTask, setCo
     });
   };
 
-  const handleToggleStatus = async (task: Task) => {
-    const nextStatus: Status = task.status === 'Completed' ? 'In Progress' : task.status === 'In Progress' ? 'Not Started' : 'Completed';
-    try {
-      await updateDoc(doc(db, 'tasks', task.id as any), { status: nextStatus });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `tasks/${task.id}`);
-    }
-  };
+  const statuses: Status[] = [
+    'Listing To Do',
+    'Design To Do',
+    'Design Confirm Request',
+    'Confirm Request Final',
+    'Confirmed',
+    'Listing Completed'
+  ];
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-8 space-y-8 h-full flex flex-col overflow-hidden">
+      <div className="flex items-center justify-between shrink-0">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">{title}</h1>
           <p className="text-slate-500 text-sm mt-1">{description}</p>
         </div>
         <button 
           onClick={onAddTask}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 shadow-sm transition-all"
+          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-100 transition-all"
         >
-          <Plus size={18} />
-          Add Task
+          <Plus size={20} />
+          New Task
         </button>
       </div>
 
-      <div className="flex items-center gap-4">
-        <div className="relative flex-1 max-w-xl">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-          <input 
-            type="text" 
-            placeholder="Search tasks..." 
-            className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <select className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/10">
-            <option>All Statuses</option>
-            <option>Completed</option>
-            <option>In Progress</option>
-            <option>Not Started</option>
-          </select>
-          <select className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/10">
-            <option>All Priorities</option>
-            <option>High</option>
-            <option>Medium</option>
-            <option>Low</option>
-          </select>
-        </div>
-        <div className="flex items-center bg-slate-100 p-1 rounded-lg">
-          <button className="p-1.5 text-slate-600 hover:bg-white hover:shadow-sm rounded transition-all">
-            <ListIcon size={16} />
-          </button>
-          <button className="p-1.5 text-slate-400 hover:bg-white hover:shadow-sm rounded transition-all">
-            <Grid size={16} />
-          </button>
+      <div className="flex-1 overflow-x-auto pb-6 custom-scrollbar">
+        <div className="flex gap-6 min-w-max h-full">
+          {statuses.map(status => {
+            const filteredTasks = tasks.filter(t => t.status === status);
+            
+            return (
+              <div key={status} className="w-80 flex flex-col bg-slate-50/50 rounded-3xl p-4 border border-slate-100">
+                <div className="flex items-center justify-between mb-4 px-2">
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={status} />
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{filteredTasks.length}</span>
+                  </div>
+                </div>
+
+                <div className="flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar">
+                  {filteredTasks.map((task) => (
+                      <motion.div 
+                        key={task.id}
+                        layoutId={task.id.toString()}
+                        onClick={() => setSelectedTaskId(task.id as string)}
+                        className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all cursor-pointer group relative"
+                      >
+                      <div className="flex justify-between items-start mb-3">
+                        <PriorityBadge priority={task.priority} />
+                        {isAdmin && (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteTask(task.id as any);
+                            }}
+                            className="p-1.5 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                      
+                      <h3 className="font-bold text-slate-800 mb-2 group-hover:text-blue-600 transition-colors line-clamp-2">{task.title}</h3>
+                      
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        <span className="text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
+                          {task.clientName || 'No Client'}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                          <Clock size={10} />
+                          {task.dueDate}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-4 border-t border-slate-50">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-slate-100 border border-white overflow-hidden">
+                            <img src={`https://picsum.photos/seed/${task.assignedToName}/50/50`} alt={task.assignedToName} />
+                          </div>
+                          <span className="text-[10px] font-bold text-slate-500 truncate max-w-[80px]">{task.assignedToName || 'Unassigned'}</span>
+                        </div>
+                        
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1 text-slate-400">
+                            <MessageSquare size={12} />
+                            <span className="text-[10px] font-bold">{task.comments?.length || 0}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-slate-400">
+                            <Image size={12} />
+                            <span className="text-[10px] font-bold">{task.images?.length || 0}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                  
+                  {filteredTasks.length === 0 && (
+                    <div className="py-12 border-2 border-dashed border-slate-100 rounded-2xl flex flex-col items-center justify-center opacity-40">
+                      <Plus size={24} className="text-slate-300 mb-2" />
+                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">No tasks</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-slate-50/50 border-b border-slate-200">
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-12">#</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Task</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Client</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Assignee</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Priority</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Due Date</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-center">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {tasks.map((task, index) => (
-              <tr key={task.id} className="hover:bg-slate-50/50 transition-colors group">
-                <td className="px-6 py-4 text-sm text-slate-400 font-medium">{index + 1}</td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-bold text-slate-800 group-hover:text-blue-600 transition-colors">{task.title}</span>
-                    <span className="text-[10px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 flex items-center gap-1">
-                      <CheckSquare size={10} />
-                      {task.subtasks.completed}/{task.subtasks.total}
-                    </span>
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-sm text-slate-500 font-medium">{task.clientName || '-'}</td>
-                <td className="px-6 py-4 text-sm text-slate-500 font-medium">{task.assignedToName || 'Unassigned'}</td>
-                <td className="px-6 py-4">
-                  <button onClick={() => handleToggleStatus(task)}>
-                    <StatusBadge status={task.status} />
-                  </button>
-                </td>
-                <td className="px-6 py-4">
-                  <PriorityBadge priority={task.priority} />
-                </td>
-                <td className="px-6 py-4 text-sm text-slate-400 font-medium">{task.dueDate}</td>
-                <td className="px-6 py-4 text-center">
-                  {isAdmin && (
-                    <button 
-                      onClick={() => handleDeleteTask(task.id as any)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-all font-bold text-xs border border-red-100"
-                    >
-                      <X size={14} />
-                      Delete
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <AnimatePresence>
+        {selectedTask && (
+          <TaskDetailModal 
+            task={selectedTask} 
+            onClose={() => setSelectedTaskId(null)} 
+            isAdmin={isAdmin}
+            onUpdate={(updates) => onUpdateTask(selectedTask.id as string, updates)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
 function StatusBadge({ status }: { status: Status }) {
   const colors: any = {
+    'Listing To Do': 'bg-orange-50 text-orange-600 border-orange-100',
+    'Design To Do': 'bg-yellow-50 text-yellow-600 border-yellow-100',
+    'Design Confirm Request': 'bg-purple-50 text-purple-600 border-purple-100',
+    'Confirm Request Final': 'bg-emerald-50 text-emerald-600 border-emerald-100',
+    'Confirmed': 'bg-blue-50 text-blue-600 border-blue-100',
+    'Listing Completed': 'bg-red-50 text-red-600 border-red-100',
     'Completed': 'bg-emerald-50 text-emerald-600 border-emerald-100',
     'In Progress': 'bg-blue-50 text-blue-600 border-blue-100',
     'Not Started': 'bg-slate-50 text-slate-500 border-slate-100',
   };
 
+  const dotColors: any = {
+    'Listing To Do': 'bg-orange-500',
+    'Design To Do': 'bg-yellow-500',
+    'Design Confirm Request': 'bg-purple-500',
+    'Confirm Request Final': 'bg-emerald-500',
+    'Confirmed': 'bg-blue-500',
+    'Listing Completed': 'bg-red-500',
+    'Completed': 'bg-emerald-500',
+    'In Progress': 'bg-blue-500',
+    'Not Started': 'bg-slate-400',
+  };
+
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${colors[status]}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${status === 'Completed' ? 'bg-emerald-500' : status === 'In Progress' ? 'bg-blue-500' : 'bg-slate-400'}`}></span>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${colors[status] || colors['Not Started']}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${dotColors[status] || dotColors['Not Started']}`}></span>
       {status}
     </span>
   );
@@ -659,6 +714,7 @@ function AddTaskModal({ onClose, onAdd, clients, staff }: {
 }) {
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Priority>('Medium');
+  const [status, setStatus] = useState<Status>('Listing To Do');
   const [clientId, setClientId] = useState('');
   const [assignedTo, setAssignedTo] = useState('');
   const [dueDate, setDueDate] = useState(new Date().toISOString().split('T')[0]);
@@ -670,16 +726,27 @@ function AddTaskModal({ onClose, onAdd, clients, staff }: {
     
     onAdd({
       title,
-      status: 'Not Started',
+      status,
       priority,
       dueDate,
       clientId,
       clientName: client?.name || 'No Client',
       assignedTo,
       assignedToName: assignee?.name || 'Unassigned',
-      subtasks: { completed: 0, total: 0 }
+      subtasks: { completed: 0, total: 0 },
+      images: [],
+      comments: []
     });
   };
+
+  const statuses: Status[] = [
+    'Listing To Do',
+    'Design To Do',
+    'Design Confirm Request',
+    'Confirm Request Final',
+    'Confirmed',
+    'Listing Completed'
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -738,15 +805,29 @@ function AddTaskModal({ onClose, onAdd, clients, staff }: {
                 </select>
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">Due Date</label>
-              <input 
-                type="date" 
-                required
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">Status</label>
+                <select 
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as Status)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-medium"
+                >
+                  {statuses.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">Due Date</label>
+                <input 
+                  type="date" 
+                  required
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-medium"
+                />
+              </div>
             </div>
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-2">Priority</label>
@@ -783,6 +864,435 @@ function AddTaskModal({ onClose, onAdd, clients, staff }: {
               </button>
             </div>
           </form>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function TaskDetailModal({ task, onClose, isAdmin, onUpdate }: { 
+  task: Task, 
+  onClose: () => void, 
+  isAdmin: boolean,
+  onUpdate: (updates: Partial<Task>) => Promise<void> | void
+}) {
+  const { user } = useFirebase();
+  const [comment, setComment] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  useEffect(() => {
+    console.log("TaskDetailModal: task prop updated:", task);
+  }, [task]);
+
+  console.log("TaskDetailModal rendering with images:", task.images?.length || 0);
+
+  const handleDownloadImage = async (url: string, filename: string) => {
+    try {
+      console.log("Attempting to download image:", url);
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+      console.log("Download successful.");
+    } catch (error) {
+      console.error("Download failed:", error);
+      // Fallback: open in new tab
+      window.open(url, '_blank');
+    }
+  };
+
+  const handleAddComment = () => {
+    if (!comment.trim() || !user) return;
+    
+    const newComment = {
+      id: Date.now().toString(),
+      userId: user.uid,
+      userName: user.displayName || user.email || 'Anonymous',
+      text: comment,
+      createdAt: new Date().toISOString()
+    };
+
+    onUpdate({
+      comments: [...(task.comments || []), newComment]
+    });
+    setComment('');
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    let file = e.target.files?.[0];
+    if (!file) return;
+
+    // Deep diagnostic logging
+    console.log("Starting image upload diagnostic...");
+    console.log("Original file info:", { name: file.name, size: (file.size / 1024).toFixed(2) + " KB", type: file.type });
+
+    if (!user) {
+      console.error("User not authenticated! Cannot upload image.");
+      alert("Error: You must be logged in to upload images.");
+      return;
+    }
+
+    if (!task.id) {
+      console.error("Task ID is missing! Cannot upload image.");
+      alert("Error: Task ID is missing. Please try closing and reopening the task.");
+      return;
+    }
+
+    if (task.images && task.images.length >= 5) {
+      alert("Maximum of 5 images per task reached. Please remove an existing image before adding a new one.");
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    try {
+      // Step 1: Compress image aggressively if it's large or if Storage is likely unreachable
+      // We target a much smaller size (0.3MB) because Base64 adds ~33% overhead
+      // and we need to leave room for other task data.
+      console.log("Attempting aggressive client-side compression...");
+      const options = {
+        maxSizeMB: 0.3, // Target ~300KB
+        maxWidthOrHeight: 1280, // Reduce resolution for better compression
+        useWebWorker: true,
+        initialQuality: 0.6 // Lower initial quality
+      };
+      try {
+        const compressedFile = await imageCompression(file, options);
+        console.log("Compression successful:", { 
+          originalSize: (file.size / 1024).toFixed(2) + " KB", 
+          compressedSize: (compressedFile.size / 1024).toFixed(2) + " KB" 
+        });
+        file = compressedFile;
+      } catch (compressionError) {
+        console.error("Compression failed, proceeding with original file:", compressionError);
+      }
+
+      // Step 2: Diagnostic Connectivity Test (Shortened)
+      console.log("Running Storage connectivity test...");
+      let isStorageReachable = false;
+      try {
+        const testRef = ref(storage, 'connectivity-test-' + Date.now());
+        await Promise.race([
+          getDownloadURL(testRef).catch(() => null),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+        ]);
+        isStorageReachable = true;
+        console.log("Storage service is reachable.");
+      } catch (e) {
+        console.warn("Storage service is UNREACHABLE or timed out. Will use Base64 fallback.");
+      }
+
+      // Step 3: Attempt Firebase Storage upload if reachable
+      if (isStorageReachable) {
+        console.log("Attempting Firebase Storage upload...");
+        const storagePath = `tasks/${task.id}/${Date.now()}_${file.name}`;
+        const storageRef = ref(storage, storagePath);
+        
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Upload timed out after 30 seconds')), 30000)
+        );
+
+        try {
+          const uploadResult = (await Promise.race([
+            uploadBytes(storageRef, file),
+            timeoutPromise
+          ])) as any;
+          
+          const downloadURL = await getDownloadURL(storageRef);
+          await onUpdate({
+            images: arrayUnion(downloadURL) as any
+          });
+          console.log("Task updated with Storage URL.");
+          setIsUploading(false);
+          return;
+        } catch (storageError) {
+          console.error("Storage upload failed, falling back to Base64:", storageError);
+        }
+      }
+
+      // Step 4: Base64 Fallback (for when Storage is unreachable or fails)
+      console.log("Using Base64 fallback...");
+      if (file.size > 1024 * 1024) {
+        alert("Image is still too large (> 1MB) even after compression. Please try a smaller image.");
+        setIsUploading(false);
+        return;
+      }
+
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      
+      const base64String = await base64Promise;
+      await onUpdate({
+        images: arrayUnion(base64String) as any
+      });
+      console.log("Task updated with Base64 image.");
+      if (!isStorageReachable) {
+        console.info("Note: Image saved to database because Storage service is unreachable in this environment.");
+      }
+    } catch (error: any) {
+      console.error("Final upload error:", error);
+      let errorMessage = "Upload failed. Please try again.";
+      try {
+        const parsed = JSON.parse(error.message);
+        if (parsed.error && parsed.error.includes('exceeds the maximum allowed size')) {
+          errorMessage = "The image is still too large for the database. Please try a smaller image or a different file type.";
+        } else {
+          errorMessage = parsed.error || errorMessage;
+        }
+      } catch (e) {
+        errorMessage = error.message || errorMessage;
+      }
+      alert(errorMessage);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  const removeImage = (index: number) => {
+    const imageUrl = task.images?.[index];
+    if (!imageUrl) return;
+    
+    onUpdate({ 
+      images: arrayRemove(imageUrl) as any 
+    });
+  };
+
+  const removeComment = (commentId: string) => {
+    onUpdate({
+      comments: (task.comments || []).filter(c => c.id !== commentId)
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+      />
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9, y: 40 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.9, y: 40 }}
+        className="bg-white w-full max-w-4xl max-h-[90vh] rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden flex flex-col"
+      >
+        <div className="p-8 border-b border-slate-100 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-4">
+            <StatusBadge status={task.status} />
+            <PriorityBadge priority={task.priority} />
+          </div>
+          <button 
+            onClick={onClose}
+            className="p-2 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-all"
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+            <div className="lg:col-span-2 space-y-10">
+              <div>
+                <h2 className="text-3xl font-bold text-slate-900 mb-4 leading-tight">{task.title}</h2>
+                <div className="flex items-center gap-6 text-slate-500 text-sm font-medium">
+                  <div className="flex items-center gap-2">
+                    <Briefcase size={16} className="text-blue-500" />
+                    <span>{task.clientName}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Calendar size={16} className="text-blue-500" />
+                    <span>Due {task.dueDate}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <UserCircle size={16} className="text-blue-500" />
+                    <span>{task.assignedToName}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <Image size={20} className="text-blue-600" />
+                    Task Images
+                  </h3>
+                  <label className={`cursor-pointer px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${isUploading ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}>
+                    {isUploading ? <Clock className="animate-spin" size={16} /> : <Plus size={16} />}
+                    {isUploading ? `Uploading ${uploadProgress}%...` : 'Add Image'}
+                    <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} disabled={isUploading} />
+                  </label>
+                </div>
+                
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                  {task.images?.map((img, idx) => (
+                    <div key={idx} className="relative group aspect-video rounded-2xl overflow-hidden border border-slate-100 bg-slate-50">
+                      <img src={img} alt={`Task ${idx}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                        <button 
+                          onClick={() => handleDownloadImage(img, `task-image-${idx}.png`)}
+                          className="p-2 bg-white/20 hover:bg-blue-500 text-white rounded-full backdrop-blur-md transition-all"
+                          title="Download Image"
+                        >
+                          <Download size={18} />
+                        </button>
+                        <button 
+                          onClick={() => removeImage(idx)}
+                          className="p-2 bg-white/20 hover:bg-red-500 text-white rounded-full backdrop-blur-md transition-all"
+                          title="Delete Image"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {(!task.images || task.images.length === 0) && (
+                    <div className="col-span-full py-12 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400">
+                      <Image size={32} className="mb-2 opacity-20" />
+                      <span className="text-sm font-bold opacity-40">No images uploaded</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <MessageSquare size={20} className="text-blue-600" />
+                  Comments
+                </h3>
+                
+                <div className="space-y-4">
+                  {task.comments?.map((c) => (
+                    <div key={c.id} className="bg-slate-50 p-4 rounded-2xl relative group">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-[10px] font-bold text-blue-600">
+                            {c.userName.charAt(0)}
+                          </div>
+                          <span className="text-xs font-bold text-slate-900">{c.userName}</span>
+                          <span className="text-[10px] font-bold text-slate-400">
+                            {new Date(c.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        {(isAdmin || c.userId === user?.uid) && (
+                          <button 
+                            onClick={() => removeComment(c.id)}
+                            className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-600 leading-relaxed">{c.text}</p>
+                    </div>
+                  ))}
+                  {(!task.comments || task.comments.length === 0) && (
+                    <div className="py-8 text-center text-slate-400 italic text-sm">
+                      No comments yet. Be the first to start the conversation!
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-4">
+                  <div className="relative">
+                    <textarea 
+                      value={comment}
+                      onChange={(e) => setComment(e.target.value)}
+                      placeholder="Add a comment..."
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm min-h-[100px] resize-none"
+                    />
+                    <button 
+                      onClick={handleAddComment}
+                      disabled={!comment.trim()}
+                      className="absolute bottom-4 right-4 p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 transition-all shadow-lg shadow-blue-100"
+                    >
+                      <Send size={18} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-8">
+              <div className="bg-slate-50 p-6 rounded-3xl space-y-6">
+                <h4 className="text-sm font-bold text-slate-900 uppercase tracking-widest">Task Details</h4>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Status</label>
+                    <select 
+                      value={task.status}
+                      onChange={(e) => onUpdate({ status: e.target.value as Status })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                    >
+                      {[
+                        'Listing To Do',
+                        'Design To Do',
+                        'Design Confirm Request',
+                        'Confirm Request Final',
+                        'Confirmed',
+                        'Listing Completed'
+                      ].map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Priority</label>
+                    <select 
+                      value={task.priority}
+                      onChange={(e) => onUpdate({ priority: e.target.value as Priority })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                    >
+                      {['High', 'Medium', 'Low'].map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Assignee</label>
+                    <div className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-xl">
+                      <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-xs font-bold text-blue-600">
+                        {task.assignedToName.charAt(0)}
+                      </div>
+                      <span className="text-sm font-bold text-slate-700">{task.assignedToName}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-blue-600 p-6 rounded-3xl text-white">
+                <h4 className="text-sm font-bold uppercase tracking-widest mb-4 opacity-80">Quick Actions</h4>
+                <div className="space-y-3">
+                  <button className="w-full py-3 bg-white/10 hover:bg-white/20 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2">
+                    <Paperclip size={16} />
+                    Attach SOP
+                  </button>
+                  <button className="w-full py-3 bg-white text-blue-600 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2">
+                    <CheckSquare size={16} />
+                    Mark as Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </motion.div>
     </div>

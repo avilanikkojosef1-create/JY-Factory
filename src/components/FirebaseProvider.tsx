@@ -144,8 +144,25 @@ export function ErrorBoundary({ children }: { children: React.ReactNode }) {
       }
     };
 
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      try {
+        const message = event.reason instanceof Error ? event.reason.message : String(event.reason);
+        const parsed = JSON.parse(message);
+        if (parsed.error && parsed.operationType) {
+          setHasError(true);
+          setErrorMsg(`Firestore ${parsed.operationType} error at ${parsed.path}: ${parsed.error}`);
+        }
+      } catch {
+        // Not a Firestore error
+      }
+    };
+
     window.addEventListener('error', handleError);
-    return () => window.removeEventListener('error', handleError);
+    window.addEventListener('unhandledrejection', handleRejection);
+    return () => {
+      window.removeEventListener('error', handleError);
+      window.removeEventListener('unhandledrejection', handleRejection);
+    };
   }, []);
 
   if (hasError) {

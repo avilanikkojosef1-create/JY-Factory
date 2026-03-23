@@ -1,5 +1,23 @@
 export type Priority = 'High' | 'Medium' | 'Low';
-export type Status = 'Completed' | 'In Progress' | 'Not Started';
+export type Status = 
+  | 'Listing To Do' 
+  | 'Design To Do' 
+  | 'Design Confirm Request' 
+  | 'Confirm Request Final' 
+  | 'Confirmed' 
+  | 'Listing Completed'
+  | 'Completed' 
+  | 'In Progress' 
+  | 'Not Started';
+
+export interface TaskComment {
+  id: string;
+  userId: string;
+  userName: string;
+  userPhoto?: string;
+  text: string;
+  createdAt: string;
+}
 
 export interface Task {
   id: string | number;
@@ -13,6 +31,8 @@ export interface Task {
   assignedTo?: string;
   assignedToName?: string;
   createdAt?: string;
+  images?: string[];
+  comments?: TaskComment[];
 }
 
 export interface Client {

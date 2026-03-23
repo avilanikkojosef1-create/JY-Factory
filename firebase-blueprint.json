@@ -23,7 +23,21 @@
         "title": { "type": "string", "description": "Task title." },
         "clientId": { "type": "string", "description": "Associated client ID." },
         "clientName": { "type": "string", "description": "Associated client name." },
-        "status": { "type": "string", "enum": ["Completed", "In Progress", "Not Started"], "description": "Current status." },
+        "status": { 
+          "type": "string", 
+          "enum": [
+            "Listing To Do", 
+            "Design To Do", 
+            "Design Confirm Request", 
+            "Confirm Request Final", 
+            "Confirmed", 
+            "Listing Completed",
+            "Completed", 
+            "In Progress", 
+            "Not Started"
+          ], 
+          "description": "Current status." 
+        },
         "priority": { "type": "string", "enum": ["High", "Medium", "Low"], "description": "Task priority." },
         "dueDate": { "type": "string", "description": "Due date." },
         "subtasks": {
@@ -35,7 +49,28 @@
         },
         "assignedTo": { "type": "string", "description": "UID of the assigned user." },
         "assignedToName": { "type": "string", "description": "Name of the assigned user." },
-        "createdAt": { "type": "string", "description": "Creation timestamp." }
+        "createdAt": { "type": "string", "description": "Creation timestamp." },
+        "images": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of image URLs."
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "text": { "type": "string" },
+              "userId": { "type": "string" },
+              "userName": { "type": "string" },
+              "userPhoto": { "type": "string" },
+              "createdAt": { "type": "string" }
+            },
+            "required": ["id", "text", "userId", "userName", "createdAt"]
+          },
+          "description": "List of task comments."
+        }
       },
       "required": ["title", "status", "priority", "dueDate"]
     },
