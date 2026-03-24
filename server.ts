@@ -13,9 +13,13 @@ async function startServer() {
   // AI Studio preview requires the app to listen on port 3000.
   // Using process.env.PORT || 3000 ensures compatibility with both environments.
   const PORT = process.env.PORT || 3000;
+  const isProduction = process.env.NODE_ENV === "production";
+
+  console.log(`Starting server in ${isProduction ? 'production' : 'development'} mode...`);
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (!isProduction) {
+    console.log("Initializing Vite middleware...");
     const vite = await createViteServer({
       server: { 
         middlewareMode: true,
@@ -27,11 +31,19 @@ async function startServer() {
   } else {
     // In production, serve the static files from the dist directory
     const distPath = path.join(process.cwd(), 'dist');
+    console.log(`Serving static files from: ${distPath}`);
+    
     app.use(express.static(distPath));
     
     // Fallback to index.html for SPA routing
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      res.sendFile(indexPath, (err) => {
+        if (err) {
+          console.error(`Error sending index.html from ${indexPath}:`, err);
+          res.status(500).send("Internal Server Error: index.html not found. Did you run 'npm run build'?");
+        }
+      });
     });
   }
 
