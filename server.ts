@@ -13,9 +13,12 @@ async function startServer() {
   // AI Studio preview requires the app to listen on port 3000.
   // Using process.env.PORT || 3000 ensures compatibility with both environments.
   const PORT = process.env.PORT || 3000;
-  const isProduction = process.env.NODE_ENV === "production";
+  // Default to production if PORT is set (standard for Cloud Run) 
+  // unless NODE_ENV is explicitly set to something else.
+  const isProduction = process.env.NODE_ENV === "production" || (!!process.env.PORT && process.env.NODE_ENV !== "development");
 
   console.log(`Starting server in ${isProduction ? 'production' : 'development'} mode...`);
+  console.log(`Environment: PORT=${process.env.PORT}, NODE_ENV=${process.env.NODE_ENV}`);
 
   // Vite middleware for development
   if (!isProduction) {
