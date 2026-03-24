@@ -37,7 +37,8 @@ import {
   Send,
   Paperclip,
   Trash2,
-  Calendar
+  Calendar,
+  Camera
 } from 'lucide-react';
 import { ViewType, Task, Priority, Status, StaffMember, Client, TimeEntry } from '../types';
 import { ADMIN_EMAIL } from '../constants';
@@ -91,6 +92,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   const [isAddTaskOpen, setIsAddTaskOpen] = useState(false);
   const [isInviteStaffOpen, setIsInviteStaffOpen] = useState(false);
   const [isAddClientOpen, setIsAddClientOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -247,6 +249,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
   const renderView = () => {
     switch (currentView) {
+      case 'Dashboard':
+        return <DashboardView tasks={tasks} clients={clients} staff={staff} timeEntries={timeEntries} />;
       case 'My Tasks':
         return <TasksView title="My Tasks" description="Tasks assigned to you across all clients" tasks={tasks.filter(t => t.assignedTo === user?.uid)} clients={clients} staff={staff} onAddTask={() => setIsAddTaskOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} onUpdateTask={handleUpdateTask} />;
       case 'All Tasks':
@@ -257,8 +261,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         return <TimeTrackerView activeTimer={activeTimer} setActiveTimer={setActiveTimer} clients={clients} tasks={tasks} user={user} />;
       case 'Timesheets':
         return <TimesheetsView timeEntries={timeEntries} isAdmin={isAdmin} />;
-      case 'Studio':
-        return <PlaceholderView title="Creative Studio" description="The workspace for our creatives to collaborate and build." />;
       case 'Staff':
         return <StaffView staff={staff} onInvite={() => setIsInviteStaffOpen(true)} setConfirmModal={setConfirmModal} setAlertModal={setAlertModal} />;
       case 'Settings':
@@ -322,15 +324,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             />
           </SidebarSection>
 
-          <SidebarSection title="CREATIVE">
-            <SidebarItem 
-              icon={<Palette size={18} />} 
-              label="Studio" 
-              active={currentView === 'Studio'} 
-              onClick={() => setCurrentView('Studio')} 
-            />
-          </SidebarSection>
-
           <SidebarSection title="ADMINISTRATION">
             <SidebarItem 
               icon={<UserCircle size={18} />} 
@@ -354,21 +347,35 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         </div>
 
         <div className="p-4 border-t border-slate-100 space-y-4">
-          <button className="flex items-center gap-3 px-3 py-2 w-full text-slate-600 hover:bg-slate-50 rounded-lg transition-colors text-sm font-medium">
-            <Sun size={18} />
-            Toggle theme
+          <button 
+            onClick={() => setIsProfileOpen(true)}
+            className="flex items-center gap-3 px-3 py-2 w-full text-slate-600 hover:bg-slate-50 rounded-lg transition-colors text-sm font-medium"
+          >
+            <UserCircle size={18} />
+            My Profile
           </button>
           <div className="flex items-center gap-3 px-3 py-2">
             <div className="w-8 h-8 rounded-full bg-slate-200 overflow-hidden shrink-0">
-              <img src={user?.photoURL || 'https://picsum.photos/seed/user/100/100'} alt="User" referrerPolicy="no-referrer" />
+              <img 
+                src={staff.find(s => s.id === user?.uid)?.avatar || user?.photoURL || 'https://picsum.photos/seed/user/100/100'} 
+                alt="User" 
+                referrerPolicy="no-referrer" 
+              />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <p className="text-sm font-bold text-slate-800 truncate">{user?.displayName || 'User'}</p>
+                <p className="text-sm font-bold text-slate-800 truncate">
+                  {staff.find(s => s.id === user?.uid)?.name || user?.displayName || 'User'}
+                </p>
                 {isAdmin && (
                   <span className="px-1 py-0.5 bg-blue-50 text-blue-600 text-[8px] font-bold rounded border border-blue-100 uppercase tracking-tighter">Admin</span>
                 )}
               </div>
+              {staff.find(s => s.id === user?.uid)?.designation && (
+                <p className="text-[10px] text-blue-600 font-bold truncate uppercase tracking-wider">
+                  {staff.find(s => s.id === user?.uid)?.designation}
+                </p>
+              )}
               <p className="text-[10px] text-slate-400 font-medium truncate">{user?.email}</p>
             </div>
           </div>
@@ -441,6 +448,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           <AddClientModal 
             onClose={() => setIsAddClientOpen(false)} 
             onAdd={handleAddClient} 
+          />
+        )}
+        {isProfileOpen && (
+          <MyProfileModal 
+            onClose={() => setIsProfileOpen(false)} 
+            staffMember={staff.find(s => s.id === user?.uid)}
           />
         )}
         {confirmModal.isOpen && (
@@ -688,6 +701,109 @@ function PriorityBadge({ priority }: { priority: Priority }) {
       <span className={`w-1.5 h-1.5 rounded-full ${priority === 'High' ? 'bg-orange-500' : priority === 'Medium' ? 'bg-blue-500' : 'bg-slate-400'}`}></span>
       {priority}
     </span>
+  );
+}
+
+function DashboardView({ tasks, clients, staff, timeEntries }: { 
+  tasks: Task[], 
+  clients: Client[], 
+  staff: StaffMember[],
+  timeEntries: TimeEntry[]
+}) {
+  const activeTasks = tasks.filter(t => t.status !== 'Completed' && t.status !== 'Confirmed');
+  const completedTasks = tasks.filter(t => t.status === 'Completed' || t.status === 'Confirmed');
+  const highPriorityTasks = tasks.filter(t => t.priority === 'High' && t.status !== 'Completed');
+  
+  // Calculate total time today
+  const today = new Date().toISOString().split('T')[0];
+  const timeToday = timeEntries
+    .filter(e => e.date === today)
+    .reduce((acc, curr) => acc + curr.duration, 0);
+  
+  const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return `${h}h ${m}m`;
+  };
+
+  return (
+    <div className="p-8 space-y-8 overflow-y-auto h-full custom-scrollbar">
+      <div>
+        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Welcome Back!</h1>
+        <p className="text-slate-500 text-sm mt-1">Here's what's happening in your workspace today.</p>
+      </div>
+
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <StatCard 
+          icon={<CheckSquare className="text-blue-600" size={24} />}
+          label="Active Tasks"
+          value={activeTasks.length.toString()}
+          trend="+2 since yesterday"
+          color="blue"
+        />
+        <StatCard 
+          icon={<Clock className="text-amber-600" size={24} />}
+          label="Time Today"
+          value={formatTime(timeToday)}
+          trend="Keep it up!"
+          color="amber"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-8">
+        {/* High Priority Tasks */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-slate-800">Urgent Tasks</h2>
+            <span className="text-xs font-bold text-red-500 bg-red-50 px-2 py-1 rounded-lg border border-red-100 uppercase tracking-wider">
+              {highPriorityTasks.length} High Priority
+            </span>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+            <div className="divide-y divide-slate-100">
+              {highPriorityTasks.slice(0, 5).map(task => (
+                <div key={task.id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between group">
+                  <div className="flex items-center gap-4">
+                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800 group-hover:text-blue-600 transition-colors">{task.title}</h4>
+                      <p className="text-xs text-slate-500">{task.clientName} • Due {task.dueDate}</p>
+                    </div>
+                  </div>
+                  <ChevronRight size={16} className="text-slate-300" />
+                </div>
+              ))}
+              {highPriorityTasks.length === 0 && (
+                <div className="p-8 text-center text-slate-400 text-sm italic">
+                  No high priority tasks. Great job!
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ icon, label, value, trend, color }: { icon: React.ReactNode, label: string, value: string, trend: string, color: string }) {
+  const colors: any = {
+    blue: 'bg-blue-50 border-blue-100',
+    emerald: 'bg-emerald-50 border-emerald-100',
+    amber: 'bg-amber-50 border-amber-100',
+    purple: 'bg-purple-50 border-purple-100'
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm hover:shadow-md transition-all group">
+      <div className={`w-12 h-12 rounded-2xl ${colors[color]} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+        {icon}
+      </div>
+      <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mb-1">{label}</p>
+      <h3 className="text-2xl font-bold text-slate-900 mb-2">{value}</h3>
+      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{trend}</p>
+    </div>
   );
 }
 
@@ -1311,16 +1427,6 @@ function SettingsView() {
       description: 'Manage standard operating procedure templates',
       icon: <FileText className="text-blue-600" size={20} />,
     },
-    {
-      title: 'SOP Reports',
-      description: 'View SOP completion reports and analytics',
-      icon: <BarChart3 className="text-blue-600" size={20} />,
-    },
-    {
-      title: 'Studio Providers',
-      description: 'Configure AI image generation models and API keys',
-      icon: <Sparkles className="text-blue-600" size={20} />,
-    },
   ];
 
   return (
@@ -1382,6 +1488,14 @@ function StaffView({ staff, onInvite, setConfirmModal, setAlertModal }: {
     });
   };
 
+  const handleUpdateRole = async (staffId: string, newRole: string) => {
+    try {
+      await updateDoc(doc(db, 'users', staffId), { role: newRole });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${staffId}`);
+    }
+  };
+
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -1430,6 +1544,7 @@ function StaffView({ staff, onInvite, setConfirmModal, setAlertModal }: {
               <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-12">#</th>
               <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Name</th>
               <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</th>
+              <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Designation</th>
               <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Role</th>
               <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</th>
               <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Invited</th>
@@ -1449,10 +1564,23 @@ function StaffView({ staff, onInvite, setConfirmModal, setAlertModal }: {
                   </div>
                 </td>
                 <td className="px-6 py-5 text-sm text-slate-500 font-medium">{member.email}</td>
+                <td className="px-6 py-5 text-sm text-slate-500 font-bold">{member.designation || '-'}</td>
                 <td className="px-6 py-5">
-                  <span className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-600 text-[10px] font-bold border border-purple-100 uppercase tracking-wider">
-                    {member.role}
-                  </span>
+                  {isAdmin ? (
+                    <select 
+                      value={member.role}
+                      onChange={(e) => handleUpdateRole(member.id as string, e.target.value)}
+                      className="bg-purple-50 text-purple-600 text-[10px] font-bold border border-purple-100 uppercase tracking-wider rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-purple-300 cursor-pointer"
+                    >
+                      <option value="admin">Admin</option>
+                      <option value="editor">Editor</option>
+                      <option value="viewer">Viewer</option>
+                    </select>
+                  ) : (
+                    <span className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-600 text-[10px] font-bold border border-purple-100 uppercase tracking-wider">
+                      {member.role}
+                    </span>
+                  )}
                 </td>
                 <td className="px-6 py-5">
                   <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border uppercase tracking-wider ${
@@ -1486,11 +1614,12 @@ function StaffView({ staff, onInvite, setConfirmModal, setAlertModal }: {
 function InviteStaffModal({ onClose, onInvite }: { onClose: () => void, onInvite: (member: any) => void }) {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
+  const [designation, setDesignation] = useState('');
   const [role, setRole] = useState('admin');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onInvite({ name, email, role });
+    onInvite({ name, email, role, designation });
   };
 
   return (
@@ -1539,6 +1668,16 @@ function InviteStaffModal({ onClose, onInvite }: { onClose: () => void, onInvite
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@jyfactory.ca"
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-2">Designation</label>
+              <input 
+                type="text" 
+                value={designation}
+                onChange={(e) => setDesignation(e.target.value)}
+                placeholder="e.g., Amazon Account Manager"
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all"
               />
             </div>
@@ -2104,6 +2243,151 @@ function TimesheetsView({
           </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+function MyProfileModal({ onClose, staffMember }: { onClose: () => void, staffMember?: StaffMember }) {
+  const { user } = useFirebase();
+  const [name, setName] = useState(staffMember?.name || user?.displayName || '');
+  const [designation, setDesignation] = useState(staffMember?.designation || '');
+  const [avatar, setAvatar] = useState(staffMember?.avatar || user?.photoURL || '');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const options = {
+        maxSizeMB: 0.2,
+        maxWidthOrHeight: 400,
+        useWebWorker: true,
+      };
+      const compressedFile = await imageCompression(file, options);
+      
+      const reader = new FileReader();
+      reader.readAsDataURL(compressedFile);
+      reader.onloadend = () => {
+        const base64data = reader.result as string;
+        setAvatar(base64data);
+        setIsUploading(false);
+      };
+    } catch (error) {
+      console.error("Image compression failed:", error);
+      setIsUploading(false);
+      alert("Failed to process image. Please try a smaller file.");
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+
+    setIsSaving(true);
+    try {
+      const userDocRef = doc(db, 'users', user.uid);
+      console.log("Updating profile for user:", user.uid, { name, designation, status: 'Active' });
+      await updateDoc(userDocRef, {
+        name,
+        designation,
+        avatar,
+        status: 'Active'
+      });
+      console.log("Profile updated successfully");
+      onClose();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+      >
+        <div className="p-8">
+          <div className="flex items-center justify-between mb-8">
+            <h2 className="text-2xl font-bold text-slate-900 tracking-tight">My Profile</h2>
+            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl transition-all text-slate-400">
+              <X size={20} />
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="flex flex-col items-center mb-6">
+              <div className="relative group">
+                <div className="w-24 h-24 rounded-full bg-slate-100 border-4 border-white shadow-lg overflow-hidden flex items-center justify-center">
+                  {avatar ? (
+                    <img src={avatar} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <UserCircle size={48} className="text-slate-300" />
+                  )}
+                  {isUploading && (
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                      <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  )}
+                </div>
+                <label className="absolute bottom-0 right-0 p-2 bg-blue-600 text-white rounded-full shadow-lg cursor-pointer hover:bg-blue-700 transition-all">
+                  <Camera size={16} />
+                  <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} disabled={isUploading} />
+                </label>
+              </div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-4">Profile Picture</p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">Full Name</label>
+                <input 
+                  type="text" 
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Enter your name"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">Designation</label>
+                <input 
+                  type="text" 
+                  value={designation}
+                  onChange={(e) => setDesignation(e.target.value)}
+                  placeholder="e.g., Amazon Account Manager"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="pt-6 flex gap-3">
+              <button 
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-all"
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit"
+                disabled={isSaving || isUploading}
+                className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </motion.div>
     </div>
   );
 }

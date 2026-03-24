@@ -11,7 +11,9 @@
         "role": { "type": "string", "enum": ["admin", "editor", "viewer"], "description": "Access level." },
         "status": { "type": "string", "enum": ["Active", "Inactive", "Pending"], "description": "Account status." },
         "avatar": { "type": "string", "description": "URL to the profile picture." },
-        "invitedDate": { "type": "string", "description": "Date the user was invited." }
+        "designation": { "type": "string", "description": "User job title or designation." },
+        "invitedDate": { "type": "string", "description": "Date the user was invited." },
+        "id": { "type": "string", "description": "Local ID field used in the application." }
       },
       "required": ["uid", "email", "role", "status"]
     },

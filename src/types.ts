@@ -64,6 +64,7 @@ export interface StaffMember {
   id: string | number;
   name: string;
   role: string;
+  designation?: string;
   email: string;
   avatar: string;
   status: 'Active' | 'Pending' | 'Inactive';

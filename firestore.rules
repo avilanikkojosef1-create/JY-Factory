@@ -106,14 +106,15 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return hasRequiredFields(['uid', 'email', 'role', 'status']) &&
-             hasOnlyAllowedFields(['uid', 'name', 'email', 'role', 'status', 'avatar', 'invitedDate', 'hasPassword', 'appPassword']) &&
+             hasOnlyAllowedFields(['uid', 'name', 'email', 'role', 'status', 'avatar', 'invitedDate', 'hasPassword', 'appPassword', 'designation', 'id']) &&
              data.uid is string && data.uid.size() > 0 &&
              data.email is string && isValidEmail(data.email) &&
              data.role in ['admin', 'editor', 'viewer'] &&
              data.status in ['Active', 'Inactive', 'Pending'] &&
              (!('name' in data) || (data.name is string && data.name.size() < 100)) &&
-             (!('avatar' in data) || (data.avatar is string && data.avatar.size() < 500)) &&
-             (!('invitedDate' in data) || (data.invitedDate is string && data.invitedDate.size() < 50)) &&
+             (!('designation' in data) || (data.designation is string && data.designation.size() < 200)) &&
+             (!('avatar' in data) || (data.avatar is string && data.avatar.size() < 5000000)) &&
+             (!('invitedDate' in data) || (data.invitedDate is string && data.invitedDate.size() < 100)) &&
              (!('hasPassword' in data) || (data.hasPassword is bool)) &&
              (!('appPassword' in data) || (data.appPassword is string && data.appPassword.size() < 200));
     }
