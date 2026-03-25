@@ -8,26 +8,31 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
+  const PORT = process.env.PORT || 3000;
   
-  // Health check endpoint
+  // 1. Request Logging (helps debugging in Cloud Run)
+  app.use((req, res, next) => {
+    console.log(`[REQUEST] ${req.method} ${req.url}`);
+    next();
+  });
+
+  // 2. Health Check Endpoint
   app.get('/health', (req, res) => {
     res.json({ 
       status: 'ok', 
       env: process.env.NODE_ENV, 
-      port: process.env.PORT,
-      cwd: process.cwd(),
+      port: PORT,
       dirname: __dirname,
-      distExists: fs.existsSync(path.resolve(process.cwd(), 'dist'))
+      distExists: fs.existsSync(path.join(__dirname, 'dist'))
     });
   });
 
-  const PORT = process.env.PORT || 3000;
-  const isProduction = process.env.NODE_ENV === "production" || (!!process.env.PORT && process.env.NODE_ENV !== "development");
-
-  console.log(`Starting server in ${isProduction ? 'production' : 'development'} mode...`);
-  console.log(`Environment: PORT=${process.env.PORT}, NODE_ENV=${process.env.NODE_ENV}`);
+  // 3. Determine Environment (Cloud Run always provides PORT)
+  const isProduction = process.env.NODE_ENV === "production" || !!process.env.PORT;
+  console.log(`Starting in ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} mode`);
 
   if (!isProduction) {
+    // Development Mode (Vite)
     console.log("Initializing Vite middleware...");
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
@@ -36,49 +41,32 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // In production, serve the static files from the dist directory
-    const distPath = path.resolve(process.cwd(), 'dist');
-    console.log(`Serving static files from: ${distPath}`);
+    // Production Mode (Serve built files)
+    const distPath = path.join(__dirname, 'dist');
     
-    if (fs.existsSync(distPath)) {
-      console.log('Dist folder contents:', fs.readdirSync(distPath));
-      const assetsPath = path.join(distPath, 'assets');
-      if (fs.existsSync(assetsPath)) {
-        console.log('Assets folder contents:', fs.readdirSync(assetsPath));
-      } else {
-        console.warn('Assets folder NOT found inside dist');
-      }
+    if (!fs.existsSync(distPath)) {
+      console.error(`[FATAL ERROR] dist folder not found at ${distPath}. Build step may have failed.`);
     } else {
-      console.error('CRITICAL: Dist folder NOT found at:', distPath);
+      console.log(`[OK] Serving static files from ${distPath}`);
     }
 
-    // Explicitly serve /assets folder to be safe
-    app.use('/assets', express.static(path.join(distPath, 'assets')));
-    
-    // Serve the rest of the static files
+    // Serve static files (js, css, images)
     app.use(express.static(distPath));
     
-    // Log requests for assets that missed the static middleware
-    app.use((req, res, next) => {
-      if (req.url.startsWith('/assets/') || req.url.endsWith('.js') || req.url.endsWith('.css')) {
-        console.error(`Asset 404: ${req.url} - This will cause a MIME type error in the browser.`);
-      }
-      next();
-    });
-
-    // Fallback to index.html for SPA routing
+    // SPA Fallback: Any unknown route gets index.html
     app.get('*', (req, res) => {
       const indexPath = path.join(distPath, 'index.html');
-      if (!fs.existsSync(indexPath)) {
-        console.error(`CRITICAL: index.html not found at ${indexPath}`);
-        return res.status(500).send("Internal Server Error: index.html not found.");
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        console.error(`[FATAL ERROR] index.html not found at ${indexPath}`);
+        res.status(500).send(`Error: index.html not found. Did the build complete?`);
       }
-      res.sendFile(indexPath);
     });
   }
 
   app.listen(Number(PORT), "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log(`Server listening on port ${PORT}`);
   });
 }
 
