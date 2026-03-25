@@ -27,8 +27,9 @@ async function startServer() {
     });
   });
 
-  // 3. Determine Environment (Cloud Run always provides PORT)
-  const isProduction = process.env.NODE_ENV === "production" || !!process.env.PORT;
+  // 3. Determine Environment
+  // We now strictly rely on NODE_ENV set in package.json scripts
+  const isProduction = process.env.NODE_ENV === "production";
   console.log(`Starting in ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} mode`);
 
   if (!isProduction) {
@@ -57,6 +58,10 @@ async function startServer() {
     app.get('*', (req, res) => {
       const indexPath = path.join(distPath, 'index.html');
       if (fs.existsSync(indexPath)) {
+        // Prevent browser from caching index.html so it always gets the latest JS file hashes
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.sendFile(indexPath);
       } else {
         console.error(`[FATAL ERROR] index.html not found at ${indexPath}`);
