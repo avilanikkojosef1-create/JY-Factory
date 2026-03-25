@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -9,6 +8,11 @@ const __dirname = path.dirname(__filename);
 async function startServer() {
   const app = express();
   
+  // Health check endpoint
+  app.get('/health', (req, res) => {
+    res.json({ status: 'ok', env: process.env.NODE_ENV, port: process.env.PORT });
+  });
+
   // Cloud Run provides the PORT environment variable (usually 8080).
   // AI Studio preview requires the app to listen on port 3000.
   // Using process.env.PORT || 3000 ensures compatibility with both environments.
@@ -23,6 +27,8 @@ async function startServer() {
   // Vite middleware for development
   if (!isProduction) {
     console.log("Initializing Vite middleware...");
+    // Dynamic import to avoid loading Vite in production where it is pruned
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { 
         middlewareMode: true,
